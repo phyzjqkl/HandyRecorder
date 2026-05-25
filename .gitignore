@@ -1,0 +1,13 @@
+# Keep source and local recorder data private in the publish repository.
+*.au3
+Agents.md
+HandyRecorder.ini
+*.rec
+index/
+*.png
+PUBLISH_TEST_CHECKLIST.md
+
+# Publish artifacts intentionally allowed:
+!README.MD
+!HR.exe
+
