@@ -13,7 +13,7 @@ HR.exe
 - Record mouse left, right, and middle clicks.
 - Record mouse wheel actions with rotation count.
 - Record mouse drags.
-- Record keyboard keys and hotkey combinations using AutoIt `Send` grammar.
+- Record keyboard keys and hotkey combinations using combo-key grammar.
 - Add string input commands with a hotkey.
 - Replay a full `.rec` file.
 - Run only the active command.
@@ -191,13 +191,13 @@ MW_W1,UP,repeat,delay,rem_wheel
 MW_W1,DOWN,repeat,delay,rem_wheel
 ```
 
-### Keyboard
+### Keyboard / Combo Keys
 
 ```text
 K_B1,key,repeat,delay,rem_key
 ```
 
-AutoIt `Send` grammar:
+Combo-key grammar:
 
 ```text
 ^  Ctrl
@@ -289,4 +289,3 @@ The command comment is replaced with a crop label, and the PNG filename uses the
 - Use `F8` for emergency stop.
 - Keep `.rec` files in the same folder as `HR.exe`.
 - If display scaling changes, use the resolution guard and test before replaying important actions.
-
