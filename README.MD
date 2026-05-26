@@ -63,7 +63,7 @@ S             Save current record
 +             Insert blank command after active command
 -             Delete active command
 Start         Run/stop current record
->             Run active command only
+>             Run active command and select next
 Rec / Off     Start/stop recording
 ```
 
@@ -74,14 +74,13 @@ All hotkeys can be edited in `HandyRecorder.ini`.
 ```text
 F8                 Emergency stop
 F9                 Start/stop replay
-Ctrl+Shift+R       Run active command
+Ctrl+Shift+R       Run active command, or continue paused run
 Ctrl+Shift+Up      Select previous command
 Ctrl+Shift+Down    Select next command
-Ctrl+Alt+Up        Move active command line up
-Ctrl+Alt+Down      Move active command line down
-Ctrl+Shift+S       Record string input
+Ctrl+Shift+P       Insert/toggle record pause command
+Ctrl+Shift+T       Record string input
 Ctrl+Shift+O       Toggle offset mode while recording
-Ctrl+Shift+T       Toggle recording tooltip
+Ctrl+Shift+Y       Toggle recording tooltip
 ```
 
 ## Recording
@@ -135,6 +134,9 @@ Comment lines start with:
 
 Comments are shown in the app but skipped during replay.
 
+When saving, command IDs are renumbered by operation family for readability:
+`M_P1`, `M_P2`, `K_B1`, `K_B2`, `S_S1`, and so on. Playback still follows file order. Offset commands use grouped numbering like `MSP_1_1`, `MSP_1_2`, then `MSP_2_1`, `MSP_2_2`.
+
 ### Mouse Click
 
 ```text
@@ -155,13 +157,13 @@ D  Double-click, if used
 ### Mouse Drag
 
 ```text
-MD_D1,x1|x2,y1|y2,L,speed,delay,rem_drag
+MD_D1,x1~x2,y1~y2,L,speed,delay,rem_drag
 ```
 
 Example:
 
 ```text
-MD_D1,100|400,200|500,L,10,,rem_drag
+MD_D1,100~400,200~500,L,10,,rem_drag
 ```
 
 Buttons may be:
@@ -222,6 +224,16 @@ K_B1,{PGDN},1,,rem_key
 S_S1,"text",repeat,delay,rem_string
 ```
 
+### Pause
+
+```text
+P_P1,"instruction",1,delay,rem_pause
+```
+
+The instruction field is editable text for what the human should do.
+Blank or `0` delay pauses forever until `Ctrl+Shift+R` or the `>` button.
+Positive delay waits up to that many seconds, but `Ctrl+Shift+R` or `>` can continue earlier.
+
 Escape double quotes by doubling them:
 
 ```text
@@ -247,14 +259,18 @@ Delay uses stoppable playback sleep, so emergency stop remains responsive.
 
 ```text
 ;= Offset Start
-MSP_1,baseX,baseY,L,1,,rem_offset_base
-MSP_2,dx,dy,L,1,,rem_offset
+MSP_1_1,baseX,baseY,L,1,,rem_offset_base
+MSP_1_2,dx,dy,L,1,,rem_offset
+;= Offset End
+;= Offset Start
+MSP_2_1,baseX,baseY,L,1,,rem_offset_base
+MSP_2_2,dx,dy,L,1,,rem_offset
 ;= Offset End
 ```
 
-`MSP_1` sets the base coordinate and clicks at the base.
+`MSP_group_1` sets the base coordinate and clicks at the base.
 
-`MSP_2`, `MSP_3`, and later commands click relative to the latest base.
+`MSP_group_2`, `MSP_group_3`, and later commands click relative to that group's base.
 
 ## Configuration
 
