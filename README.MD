@@ -317,6 +317,7 @@ When checked, HandyRecorder opens a companion Review window flush against the ri
 The image is displayed 1:1, so a `30 x 50` PNG uses a `30 x 50` preview area.
 The text pane below the image shows the active command rem field and can be edited in idle mode.
 If the active command has no index screenshot, the Review window still shows the editable rem text pane.
+Because `.rec` commands are comma-separated, commas and newlines entered in the rem editor are converted to safe text.
 
 In recording mode, Review is display-only.
 In idle mode, drag on the review image to draw a dashed crop rectangle.
