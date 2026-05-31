@@ -321,7 +321,9 @@ Because `.rec` commands are comma-separated, commas and newlines entered in the 
 
 In recording mode, Review is display-only.
 In idle mode, drag on the review image to draw a dashed crop rectangle.
-When the mouse button is released, HandyRecorder overwrites the old `index` PNG with the selected crop, renames the image label with the new crop rectangle coordinates, updates the active command `rem_...`, and reloads the preview.
+When the mouse button is released, HandyRecorder overwrites the old `index` PNG, updates the active command `rem_...`, and reloads the preview.
+Review crop labels store crop corner offsets from the command mouse coordinate, using `crop_x1~y1_x2~y2`.
+For example, `rem_p1_crop_-10~-20_9~19` means the crop's top-left corner is 10 px left and 20 px above the command mouse point, and the bottom-right corner is 9 px right and 19 px below it.
 Mouse and keyboard actions inside the Review window are ignored by the recorder.
 
 ## Notes
