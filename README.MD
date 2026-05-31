@@ -313,13 +313,15 @@ The command comment is replaced with a crop label, and the PNG filename uses the
 ## Review Window
 
 The `Review` checkbox is always unchecked on startup.
-When checked, HandyRecorder opens an image window beside the main UI for the active `index` screenshot.
+When checked, HandyRecorder opens a companion Review window flush against the right side of the main UI and follows the main UI when it moves.
 The image is displayed 1:1, so a `30 x 50` PNG uses a `30 x 50` preview area.
+The text pane below the image shows the active command rem field and can be edited in idle mode.
+If the active command has no index screenshot, the Review window still shows the editable rem text pane.
 
 In recording mode, Review is display-only.
 In idle mode, drag on the review image to draw a dashed crop rectangle.
 When the mouse button is released, HandyRecorder overwrites the old `index` PNG with the selected crop, renames the image label with the new crop rectangle coordinates, updates the active command `rem_...`, and reloads the preview.
-Mouse actions inside the Review window are ignored by the recorder.
+Mouse and keyboard actions inside the Review window are ignored by the recorder.
 
 ## Notes
 
