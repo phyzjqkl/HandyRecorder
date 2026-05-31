@@ -21,8 +21,9 @@ HR.exe
 - Insert, delete, save, and reorder command lines.
 - Use offset mouse mode for relative click groups.
 - Auto-create screenshot crops for mouse actions.
+- Review index screenshots beside the app and crop them in idle mode.
 - Display live mouse position and pixel color while recording.
-- Stop playback quickly with an emergency hotkey.
+- Stop playback quickly with `F9`, or pause/resume playback with `F8`.
 - Check recorded screen resolution before replay.
 
 ## Quick Start
@@ -72,9 +73,14 @@ Rec / Off     Start/stop recording
 All hotkeys can be edited in `HandyRecorder.ini`.
 
 ```text
-F8                 Emergency stop
-F9                 Start/stop replay
+F7                 Record mouse move/hover while recording
+F8                 Pause/resume playback, or pause/resume recording if recording is active
+F9                 Stop replay
 Ctrl+Shift+R       Run active command, or continue paused run
+Ctrl+Alt+R         Run selected record file
+Ctrl+Alt+Left      Select previous record file
+Ctrl+Alt+Right     Select next record file
+Ctrl+Alt+0..9      Run first file starting with 0_..9_
 Ctrl+Shift+Up      Select previous command
 Ctrl+Shift+Down    Select next command
 Ctrl+Shift+P       Insert/toggle record pause command
@@ -105,6 +111,10 @@ Example:
 ```
 
 Press `Off` to stop and save.
+
+During playback, `F8` pauses the running flow and the status changes to `Pause`.
+While paused, press `Rec` to record extra commands into the current `.rec` file immediately after the active command.
+Press `Off` to save/reload the file, then press `F8`, `Ctrl+Shift+R`, or `>` to continue.
 
 ## Resolution Safety
 
@@ -233,6 +243,7 @@ P_P1,"instruction",1,delay,rem_pause
 The instruction field is editable text for what the human should do.
 Blank or `0` delay pauses forever until `Ctrl+Shift+R` or the `>` button.
 Positive delay waits up to that many seconds, but `Ctrl+Shift+R` or `>` can continue earlier.
+The global `F8` pause also pauses normal playback and resumes with another `F8`.
 
 Escape double quotes by doubling them:
 
@@ -253,7 +264,7 @@ T_D1,1,1,,rem_wait_1s
 T_D1,0.5,1,,rem_wait_half_second
 ```
 
-Delay uses stoppable playback sleep, so emergency stop remains responsive.
+Delay uses stoppable playback sleep, so `F8` pause and `F9` stop remain responsive.
 
 ### Offset Mode
 
@@ -299,9 +310,21 @@ index\
 
 The command comment is replaced with a crop label, and the PNG filename uses the same label.
 
+## Review Window
+
+The `Review` checkbox is always unchecked on startup.
+When checked, HandyRecorder opens an image window beside the main UI for the active `index` screenshot.
+The image is displayed 1:1, so a `30 x 50` PNG uses a `30 x 50` preview area.
+
+In recording mode, Review is display-only.
+In idle mode, drag on the review image to draw a dashed crop rectangle.
+When the mouse button is released, HandyRecorder overwrites the old `index` PNG with the selected crop, renames the image label with the new crop rectangle coordinates, updates the active command `rem_...`, and reloads the preview.
+Mouse actions inside the Review window are ignored by the recorder.
+
 ## Notes
 
 - Run actions carefully. Playback controls the real mouse and keyboard.
-- Use `F8` for emergency stop.
+- Use `F8` to pause/resume playback.
+- Use `F9` to stop playback.
 - Keep `.rec` files in the same folder as `HR.exe`.
 - If display scaling changes, use the resolution guard and test before replaying important actions.
