@@ -23,7 +23,7 @@ HR.exe
 - Auto-create screenshot crops for mouse actions.
 - Review index screenshots beside the app and crop them in idle mode.
 - Display live mouse position and pixel color while recording.
-- Stop playback quickly with `F9`, or pause/resume playback with `F8`.
+- Pause/resume playback with `F9`, and stop playback or recording with `Shift+F9`.
 - Check recorded screen resolution before replay.
 
 ## Quick Start
@@ -45,7 +45,7 @@ Top title buttons:
 
 ```text
 ?  Show/hide help
-_  Minimize
+-  Minimize
 X  Close
 ```
 
@@ -73,17 +73,17 @@ Rec / Off     Start/stop recording
 All hotkeys can be edited in `HandyRecorder.ini`.
 
 ```text
-F7                 Record mouse move/hover while recording
-F8                 Pause/resume playback, or pause/resume recording if recording is active
-F9                 Stop replay
-Ctrl+Shift+R       Run active command, or continue paused run
-Ctrl+Alt+R         Run selected record file
-Ctrl+Alt+Left      Select previous record file
-Ctrl+Alt+Right     Select next record file
+F5                 Select previous command
+F6                 Run active command only
+Shift+F6           Run active command and select next
+F7                 Select next command
+F8                 Record mouse move/hover while recording
+F9                 Pause/resume playback, or pause/resume recording if recording is active
+Shift+F9           Stop replay, or stop recording like pressing Off
+Alt+F5             Select previous record file
+Alt+F6             Run selected record file
+Alt+F7             Select next record file
 Ctrl+Alt+0..9      Run first file starting with 0_..9_
-Ctrl+Shift+Up      Select previous command
-Ctrl+Shift+Down    Select next command
-Ctrl+Shift+P       Insert/toggle record pause command
 Ctrl+Shift+T       Record string input
 Ctrl+Shift+O       Toggle offset mode while recording
 Ctrl+Shift+Y       Toggle recording tooltip
@@ -112,9 +112,9 @@ Example:
 
 Press `Off` to stop and save.
 
-During playback, `F8` pauses the running flow and the status changes to `Pause`.
+During playback, `F9` pauses the running flow and the status changes to `Pause`.
 While paused, press `Rec` to record extra commands into the current `.rec` file immediately after the active command.
-Press `Off` to save/reload the file, then press `F8`, `Ctrl+Shift+R`, or `>` to continue.
+Press `Off` to save/reload the file, then press `F9`, `F6`, `Shift+F6`, or `>` to continue.
 
 ## Resolution Safety
 
@@ -241,9 +241,9 @@ P_P1,"instruction",1,delay,rem_pause
 ```
 
 The instruction field is editable text for what the human should do.
-Blank or `0` delay pauses forever until `Ctrl+Shift+R` or the `>` button.
-Positive delay waits up to that many seconds, but `Ctrl+Shift+R` or `>` can continue earlier.
-The global `F8` pause also pauses normal playback and resumes with another `F8`.
+Blank or `0` delay pauses forever until `F6`, `Shift+F6`, or the `>` button.
+Positive delay waits up to that many seconds, but `F6`, `Shift+F6`, or `>` can continue earlier.
+The global `F9` pause also pauses normal playback and resumes with another `F9`.
 
 Escape double quotes by doubling them:
 
@@ -264,7 +264,7 @@ T_D1,1,1,,rem_wait_1s
 T_D1,0.5,1,,rem_wait_half_second
 ```
 
-Delay uses stoppable playback sleep, so `F8` pause and `F9` stop remain responsive.
+Delay uses stoppable playback sleep, so `F9` pause and `Shift+F9` stop remain responsive.
 
 ### Offset Mode
 
@@ -330,7 +330,7 @@ Mouse and keyboard actions inside the Review window are ignored by the recorder.
 ## Notes
 
 - Run actions carefully. Playback controls the real mouse and keyboard.
-- Use `F8` to pause/resume playback.
-- Use `F9` to stop playback.
+- Use `F9` to pause/resume playback.
+- Use `Shift+F9` to stop playback.
 - Keep `.rec` files in the same folder as `HR.exe`.
 - If display scaling changes, use the resolution guard and test before replaying important actions.
