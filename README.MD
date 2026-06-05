@@ -8,6 +8,8 @@ The published build is:
 HR.exe
 ```
 
+Current release: `1.01`
+
 ## Quick Start
 
 1. Put `HR.exe` in a writable folder.
@@ -41,6 +43,7 @@ Rec / Off          Start/stop recording
 ```
 
 During recording, the Commands `Auto` checkbox becomes `ACmt`. When `ACmt` is checked, mouse actions create screenshot crops in the `index` folder.
+Holding a mouse button longer than `[Record] mouse_down_hold_sec` without dragging records a manual long press as `M_D` plus `M_U`.
 
 ## Default Hotkeys
 
@@ -153,6 +156,8 @@ Common examples:
 
 ```text
 M_P1,500,300,L,1,,rem_click
+M_D1,500,300,L,1,2.4,rem_down
+M_U1,500,300,L,1,,rem_up
 MM_M1,500,300,0,1,,rem_move
 MD_D1,100~400,200~500,L,10,,rem_drag
 MW_W1,DOWN,3,,rem_wheel
@@ -161,6 +166,15 @@ S_S1,"text",1,,rem_string
 P_P1,"human instruction",1,,rem_pause
 T_D1,1,1,,rem_delay
 ```
+
+Mouse long press uses two commands. The hold time is stored in the `delay` field of `M_D`:
+
+```text
+M_D1,1200,850,L,1,3.0,rem_down
+M_U1,1200,850,L,1,,rem_up
+```
+
+Playback moves to `1200,850`, presses the left button, waits `3.0` seconds with stoppable `SafeSleep`, then releases on the `M_U` line.
 
 Combo-key grammar follows AutoIt `Send` style:
 
@@ -193,7 +207,7 @@ Useful settings include:
 [Settings]      action_delay, repeat_delay
 [Hotkeys]       all hotkeys
 [Merge]         mouse compression tolerance
-[Record]        drag threshold, tooltip, string masking
+[Record]        drag threshold, long press threshold, tooltip, string masking
 [AutoComment]   crop size
 [Review]        zoom_ratio
 [Info]          editable help text
