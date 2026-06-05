@@ -1,120 +1,127 @@
 # HandyRecorder
 
-HandyRecorder is a compact Windows keyboard and mouse recorder for creating, editing, and replaying `.rec` automation files.
+HandyRecorder is a compact Windows macro recorder and runner. It records mouse and keyboard actions into editable `.rec` files, lets you adjust the command list, and replays the selected macro with safety controls.
 
-The publish build is:
+The published build is:
 
 ```text
 HR.exe
 ```
 
-## Features
-
-- Record mouse left, right, and middle clicks.
-- Record mouse wheel actions with rotation count.
-- Record mouse drags.
-- Record keyboard keys and hotkey combinations using combo-key grammar.
-- Add string input commands with a hotkey.
-- Replay a full `.rec` file.
-- Run only the active command.
-- Edit commands directly in the compact command box.
-- Insert, delete, save, and reorder command lines.
-- Use offset mouse mode for relative click groups.
-- Auto-create screenshot crops for mouse actions.
-- Review index screenshots beside the app and crop them in idle mode.
-- Display live mouse position and pixel color while recording.
-- Pause/resume playback with `F9`, and stop playback or recording with `Shift+F9`.
-- Check recorded screen resolution before replay.
-
 ## Quick Start
 
-1. Download or copy `HR.exe`.
-2. Put `HR.exe` in a writable folder.
-3. Run `HR.exe`.
-4. The app creates `HandyRecorder.ini` and a default `.rec` file if needed.
-5. Press `Rec` to start recording.
-6. Perform actions outside the HandyRecorder window.
-7. Press `Off` to stop recording and save.
-8. Press `Start` to replay the selected `.rec` file.
+1. Put `HR.exe` in a writable folder.
+2. Run `HR.exe`.
+3. HandyRecorder creates `HandyRecorder.ini` and `record1.rec` if they do not exist.
+4. Press `N` to create a new record file and start recording immediately.
+5. Press `Off` to stop and save.
+6. Press `Start` to replay the selected file.
 
-## Main Window
+Press `Rec` when you want to record into the current active `.rec` file instead of creating a new file. New recorded commands insert after the active command line.
 
-The window is intentionally small and always on top.
-
-Top title buttons:
+## Main Controls
 
 ```text
-?  Show/hide help
--  Minimize
-X  Close
+Record Files       Select the active .rec file
+Record Auto        Run record files one by one
+SkipRes            Skip resolution mismatch protection
+Commands           View/edit the active command
+Commands Auto      Repeat the current file during playback
+Review             Show screenshot/rem review window
+A                  Delay between commands
+R                  Repeat delay
+L                  Reload INI and .rec files
+N                  New file and start recording
+S                  Save current file
+D                  Duplicate active file as *_cp1, *_cp2...
++ / -              Insert/delete command line
+Start              Run/stop selected file
+>                  Run active command and move next
+Rec / Off          Start/stop recording
 ```
 
-Main controls:
-
-```text
-Record Files  Select a .rec file
-Commands      View or edit active command
-A             Action delay between commands
-R             Repeat delay for Auto mode
-Auto          Repeat playback when checked
-ACmt          AutoComment crop mode while recording
-L             Reload record file list
-N             New record buffer
-S             Save current record
-+             Insert blank command after active command
--             Delete active command
-Start         Run/stop current record
->             Run active command and select next
-Rec / Off     Start/stop recording
-```
+During recording, the Commands `Auto` checkbox becomes `ACmt`. When `ACmt` is checked, mouse actions create screenshot crops in the `index` folder.
 
 ## Default Hotkeys
 
-All hotkeys can be edited in `HandyRecorder.ini`.
+Hotkeys can be edited in `HandyRecorder.ini`.
 
 ```text
-F5                 Select previous command
-F6                 Run active command only
-Shift+F6           Run active command and select next
-F7                 Select next command
-F8                 Record mouse move/hover while recording
-F9                 Pause/resume playback, or pause/resume recording if recording is active
-Shift+F9           Stop replay, or stop recording like pressing Off
-Alt+F5             Select previous record file
+F5                 Previous command in idle/normal recording
+F6                 Run active command in idle; delete current line in normal recording
+Shift+F6           Run active command and move next in idle
+F7                 Next command in idle/normal recording
+F8                 Record mouse move/hover
+F9                 Pause/resume playback; pause/resume recording when recording
+Alt+F9             Stop recording / finish patch recording
+Shift+F9           Emergency stop / Off
+Alt+F5 / Alt+F7    Previous/next record file
 Alt+F6             Run selected record file
-Alt+F7             Select next record file
-Ctrl+Alt+0..9      Run first file starting with 0_..9_
-Ctrl+Shift+T       Record string input
-Ctrl+Shift+O       Toggle offset mode while recording
+Ctrl+Alt+0..9      Run file starting with 0_ through 9_
+Ctrl+Shift+T       Toggle string recording
+Ctrl+Shift+O       Toggle offset mouse mode
 Ctrl+Shift+Y       Toggle recording tooltip
 ```
 
-## Recording
+In running or playback-pause mode, `F5/F6/F7` do not move or run commands. This prevents accidental interference with an active playback flow.
 
-Press `Rec` to start recording.
+## Recording Workflow
 
-While recording:
+`N` creates a new file named like `rec_YYYYMMDD_HHMMSS` and immediately starts recording.
 
-- `Rec` changes to `Off`.
-- `Auto` changes to `ACmt`.
-- If `ACmt` is checked, mouse actions create screenshot crops in the `index` folder.
-- The live tooltip displays:
+`Rec` records into the currently selected file. New actions insert after the active command. If the active line is a comment block beginning with `;=`, insertion happens after the last continuous comment line in that block.
 
-```text
-x, y, decimalPixelColor
-```
-
-Example:
+In normal recording:
 
 ```text
-1474, 746, 131232
+F5 / F7      Move the insertion position
+F6           Delete current command and activate the previous line
+F8           Record mouse hover/move
+F9           Pause/resume recording
+Alt+F9/Off   Stop recording and save
 ```
 
-Press `Off` to stop and save.
+## Playback-Pause Patch Recording
 
-During playback, `F9` pauses the running flow and the status changes to `Pause`.
-While paused, press `Rec` to record extra commands into the current `.rec` file immediately after the active command.
-Press `Off` to save/reload the file, then press `F9`, `F6`, `Shift+F6`, or `>` to continue.
+This is useful when a running macro pauses and you want to record extra steps into that exact location.
+
+```text
+Running -> F9             Pause playback
+Pause -> Rec              Start patch recording
+Patch Recording -> Off    Insert patch, save, reload, stay paused
+Pause -> F9               Continue playback
+```
+
+Patch recording uses a temporary command buffer. The command box shows only the new patch commands while patch recording. When you press `Off` or `Alt+F9`, HandyRecorder inserts that patch after the saved playback pause command, reloads the file, and remains paused so you can inspect before continuing.
+
+## Review And AutoComment
+
+When `ACmt` is enabled, mouse clicks, drags, and `F8` mouse moves create screenshots in:
+
+```text
+index\
+```
+
+The command `rem_` field becomes the PNG filename. Current crop labels use mouse-relative offsets:
+
+```text
+rem_idx_260604_154233_0001_x-10~9_y-20~19
+```
+
+The matching image is:
+
+```text
+index\idx_260604_154233_0001_x-10~9_y-20~19.png
+```
+
+The Review window opens beside the main UI. It shows the active index image, a zoom slider, and the command `rem_` text. The zoom ratio defaults to `2` and is stored in:
+
+```text
+[Review]
+zoom_ratio=2
+```
+
+You can crop the review image in idle mode and record mode. Mouse actions that start inside the Review window are never recorded, even if the drag leaves the image/window. The old PNG is renamed to the new `idx_...` filename after crop.
 
 ## Resolution Safety
 
@@ -124,92 +131,38 @@ Each `.rec` file starts with a resolution line:
 ;= Resolution 5120x2160
 ```
 
-If the current screen resolution does not match the recorded resolution, replay stops and the status label shows:
+If the current display resolution does not match, playback stops and the status shows:
 
 ```text
 ResMismatch: currentWidthxcurrentHeight
 ```
 
-This prevents mouse coordinates from replaying on the wrong screen layout.
+Check `SkipRes` only when you intentionally want to bypass this protection.
 
-## REC Command Format
+## Command Grammar
 
-`.rec` files are plain text. One command per line.
+`.rec` files are plain text, one command per line. Comment lines start with `;=` and are skipped during playback.
 
-Comment lines start with:
+General command fields:
 
 ```text
-;=
+command,data1,data2,data3,repeat,delay,rem_comment
 ```
 
-Comments are shown in the app but skipped during replay.
-
-When saving, command IDs are renumbered by operation family for readability:
-`M_P1`, `M_P2`, `K_B1`, `K_B2`, `S_S1`, and so on. Playback still follows file order. Offset commands use grouped numbering like `MSP_1_1`, `MSP_1_2`, then `MSP_2_1`, `MSP_2_2`.
-
-### Mouse Click
+Common examples:
 
 ```text
-M_P1,x,y,L,repeat,delay,rem_comment
-M_P1,x,y,R,repeat,delay,rem_comment
-M_P1,x,y,C,repeat,delay,rem_comment
-```
-
-Buttons:
-
-```text
-L  Left
-R  Right
-C  Middle
-D  Double-click, if used
-```
-
-### Mouse Drag
-
-```text
-MD_D1,x1~x2,y1~y2,L,speed,delay,rem_drag
-```
-
-Example:
-
-```text
-MD_D1,100~400,200~500,L,10,,rem_drag
-```
-
-Buttons may be:
-
-```text
-L  Left drag
-R  Right drag
-C  Middle drag
-```
-
-### Mouse Move
-
-```text
-MM_M1,x,y,speed,repeat,delay,rem_move
-```
-
-Example:
-
-```text
+M_P1,500,300,L,1,,rem_click
 MM_M1,500,300,0,1,,rem_move
+MD_D1,100~400,200~500,L,10,,rem_drag
+MW_W1,DOWN,3,,rem_wheel
+K_B1,^c,1,,rem_key
+S_S1,"text",1,,rem_string
+P_P1,"human instruction",1,,rem_pause
+T_D1,1,1,,rem_delay
 ```
 
-### Mouse Wheel
-
-```text
-MW_W1,UP,repeat,delay,rem_wheel
-MW_W1,DOWN,repeat,delay,rem_wheel
-```
-
-### Keyboard / Combo Keys
-
-```text
-K_B1,key,repeat,delay,rem_key
-```
-
-Combo-key grammar:
+Combo-key grammar follows AutoIt `Send` style:
 
 ```text
 ^  Ctrl
@@ -221,116 +174,35 @@ Combo-key grammar:
 Examples:
 
 ```text
-K_B1,^c,1,,rem_key
-K_B1,!c,1,,rem_key
-K_B1,^!i,1,,rem_key
-K_B1,#{LEFT},1,,rem_key
-K_B1,{PGDN},1,,rem_key
+^c        Ctrl+C
+!c        Alt+C
+^!i       Ctrl+Alt+I
+#{LEFT}   Win+Left
+{PGDN}    Page Down
 ```
-
-### String
-
-```text
-S_S1,"text",repeat,delay,rem_string
-```
-
-### Pause
-
-```text
-P_P1,"instruction",1,delay,rem_pause
-```
-
-The instruction field is editable text for what the human should do.
-Blank or `0` delay pauses forever until `F6`, `Shift+F6`, or the `>` button.
-Positive delay waits up to that many seconds, but `F6`, `Shift+F6`, or `>` can continue earlier.
-The global `F9` pause also pauses normal playback and resumes with another `F9`.
-
-Escape double quotes by doubling them:
-
-```text
-S_S1,"He said ""OK""",1,,rem_string
-```
-
-### Delay
-
-```text
-T_D1,seconds,repeat,,rem_delay
-```
-
-Examples:
-
-```text
-T_D1,1,1,,rem_wait_1s
-T_D1,0.5,1,,rem_wait_half_second
-```
-
-Delay uses stoppable playback sleep, so `F9` pause and `Shift+F9` stop remain responsive.
-
-### Offset Mode
-
-```text
-;= Offset Start
-MSP_1_1,baseX,baseY,L,1,,rem_offset_base
-MSP_1_2,dx,dy,L,1,,rem_offset
-;= Offset End
-;= Offset Start
-MSP_2_1,baseX,baseY,L,1,,rem_offset_base
-MSP_2_2,dx,dy,L,1,,rem_offset
-;= Offset End
-```
-
-`MSP_group_1` sets the base coordinate and clicks at the base.
-
-`MSP_group_2`, `MSP_group_3`, and later commands click relative to that group's base.
 
 ## Configuration
 
-`HandyRecorder.ini` is created next to `HR.exe`.
+`HandyRecorder.ini` is stored beside `HR.exe`. If the INI is missing, HandyRecorder creates it. If keys are missing, it repairs only missing keys without overwriting your existing values.
 
-You can edit:
+Press `L` to reload the INI and `.rec` files after editing them.
 
-- Window position
-- Action delay
-- Repeat delay
-- Auto repeat
-- Hotkeys
-- Mouse compression tolerance
-- Drag threshold
-- Tooltip behavior
-- AutoComment crop size
-- Help tooltip text
-
-## AutoComment Crops
-
-When `ACmt` is enabled during recording, mouse actions create crop images in:
+Useful settings include:
 
 ```text
-index\
+[Settings]      action_delay, repeat_delay
+[Hotkeys]       all hotkeys
+[Merge]         mouse compression tolerance
+[Record]        drag threshold, tooltip, string masking
+[AutoComment]   crop size
+[Review]        zoom_ratio
+[Info]          editable help text
 ```
-
-The command comment is replaced with a crop label, and the PNG filename uses the same label.
-
-## Review Window
-
-The `Review` checkbox is always unchecked on startup.
-When checked, HandyRecorder opens a companion Review window flush against the right side of the main UI and follows the main UI when it moves.
-The image is displayed 1:1, so a `30 x 50` PNG uses a `30 x 50` preview area.
-The text pane below the image shows the active command rem field and can be edited in idle mode.
-If the active command has no index screenshot, the Review window still shows the editable rem text pane.
-Because `.rec` commands are comma-separated, commas and newlines entered in the rem editor are converted to safe text.
-
-In recording mode, Review is display-only.
-In idle mode, drag on the review image to draw a dashed crop rectangle.
-If the drag extends outside the preview image, the crop is clamped to the image edge and the outside portion is ignored.
-When the mouse button is released, HandyRecorder overwrites the old `index` PNG, updates the active command `rem_...`, and reloads the preview.
-Review crop labels store crop corner offsets from the command mouse coordinate, using `crop_x1~y1_x2~y2`.
-For example, `rem_p1_crop_-10~-20_9~19` means the crop's top-left corner is 10 px left and 20 px above the command mouse point, and the bottom-right corner is 9 px right and 19 px below it.
-Mouse and keyboard actions inside the Review window are ignored by the recorder.
 
 ## Notes
 
-- Run actions carefully. Playback controls the real mouse and keyboard.
-- Use `F9` to pause/resume playback.
-- Use `Shift+F9` to stop playback.
+- Playback controls the real mouse and keyboard. Test macros carefully.
 - Keep `.rec` files in the same folder as `HR.exe`.
-- If display scaling changes, use the resolution guard and test before replaying important actions.
+- Use `F9` to pause/resume playback.
+- Use `Shift+F9` for emergency stop.
+- Use `SkipRes` carefully if the recorded and current screen layouts differ.
