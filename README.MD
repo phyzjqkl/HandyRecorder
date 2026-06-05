@@ -8,7 +8,7 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.01`
+Current release: `1.02`
 
 ## Quick Start
 
@@ -20,6 +20,7 @@ Current release: `1.01`
 6. Press `Start` to replay the selected file.
 
 Press `Rec` when you want to record into the current active `.rec` file instead of creating a new file. New recorded commands insert after the active command line.
+Version `1.02` fixes saving direct command-box edits and Review rem edits when pressing `S` or `Off`.
 
 ## Main Controls
 
