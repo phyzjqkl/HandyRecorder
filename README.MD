@@ -8,19 +8,48 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.02`
+Current release: `1.21`
 
 ## Quick Start
 
 1. Put `HR.exe` in a writable folder.
 2. Run `HR.exe`.
-3. HandyRecorder creates `HandyRecorder.ini` and `record1.rec` if they do not exist.
+3. HandyRecorder creates `HandyRecorder.ini`, `<folder>.env`, `<folder>.flow`, and `micracts\record1.rec` if needed.
 4. Press `N` to create a new record file and start recording immediately.
 5. Press `Off` to stop and save.
 6. Press `Start` to replay the selected file.
 
 Press `Rec` when you want to record into the current active `.rec` file instead of creating a new file. New recorded commands insert after the active command line.
-Version `1.02` fixes saving direct command-box edits and Review rem edits when pressing `S` or `Off`.
+Version `1.21` treats the HandyRecorder folder as an action folder for AutoFlow/AIFlow use and writes flow-table entries with file extensions.
+
+## Action Folder Layout
+
+HandyRecorder now stores macros in an action-folder layout:
+
+```text
+<action folder>\
+  HR.exe
+  HandyRecorder.ini
+  <action folder>.env
+  <action folder>.flow
+  micracts\
+    *.rec
+  index\
+  export\
+```
+
+The Record Files list is loaded from `<action folder>.flow`, one file name per line with extension. Lines starting with `;=` are comments or disabled actions and are hidden from the Record Files list. HandyRecorder shows only simple local `.rec` entries from `micracts`; future AIFlow entries such as `.ps1`, `.bat`, `.exe`, `.flow`, and relative paths are left for the AIFlow interpreter. If the flow file does not exist, HandyRecorder creates it from `micracts\*.rec` ordered from oldest to newest file time. On first v1.2+ run, existing root `.rec` files are copied into `micracts` for migration.
+
+Example:
+
+```text
+;= monthlyQA flow
+login.rec
+prepare_env.ps1
+clean_cache.bat
+helper.exe
+../imageQA/imageQA.flow
+```
 
 ## Main Controls
 
