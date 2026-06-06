@@ -8,7 +8,7 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.24`
+Current release: `1.30`
 
 ## Quick Start
 
@@ -20,7 +20,7 @@ Current release: `1.24`
 6. Press `Start` to replay the selected file.
 
 Press `Rec` when you want to record into the current active `.rec` file instead of creating a new file. New recorded commands insert after the active command line.
-Version `1.24` treats the HandyRecorder folder as an action/task folder for AutoFlow/AIFlow use. `.tsk` tables define task-level operations; `.flw` is reserved for the upper flow-control layer.
+Version `1.30` adds visual state feedback: pause status blinks red faster, while active Stop/Off buttons breathe slowly during running or recording.
 
 ## Action Folder Layout
 
@@ -72,6 +72,15 @@ D                  Duplicate active file as *_cp1, *_cp2...
 Start              Run/stop selected file
 >                  Run active command and move next
 Rec / Off          Start/stop recording
+```
+
+Blink feedback can be tuned in `HandyRecorder.ini`:
+
+```ini
+[UI]
+blink_enabled=1
+blink_pause_ms=250
+blink_button_ms=700
 ```
 
 During recording, the Commands `Auto` checkbox becomes `ACmt`. When `ACmt` is checked, mouse actions create screenshot crops in the `index` folder.
