@@ -8,7 +8,7 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.22`
+Current release: `1.23`
 
 ## Quick Start
 
@@ -20,7 +20,7 @@ Current release: `1.22`
 6. Press `Start` to replay the selected file.
 
 Press `Rec` when you want to record into the current active `.rec` file instead of creating a new file. New recorded commands insert after the active command line.
-Version `1.22` treats the HandyRecorder folder as an action folder for AutoFlow/AIFlow use and writes `.flw` table entries with file extensions.
+Version `1.23` treats the HandyRecorder folder as an action folder for AutoFlow/AIFlow use. `.flw` tables use extensionless names for rec macros and extensions for non-rec actions.
 
 ## Action Folder Layout
 
@@ -38,17 +38,18 @@ HandyRecorder now stores macros in an action-folder layout:
   export\
 ```
 
-The Record Files list is loaded from `<action folder>.flw`, one file name per line with extension. Lines starting with `;=` are comments or disabled actions and are hidden from the Record Files list. HandyRecorder shows only simple local `.rec` entries from `micracts`; future AIFlow entries such as `.ps1`, `.bat`, `.exe`, `.flw`, and relative paths are left for the AIFlow interpreter. If the `.flw` file does not exist, HandyRecorder creates it from `micracts\*.rec` ordered from oldest to newest file time. On first v1.2+ run, existing root `.rec` files are copied into `micracts` for migration.
+The Record Files list is loaded from `<action folder>.flw`. Local rec macros are extensionless, while non-rec actions keep their extension. Lines starting with `;=` are comments or disabled actions and are hidden from the Record Files list. HandyRecorder shows only simple local rec entries from `micracts`; future AIFlow entries such as `.ps1`, `.bat`, `.exe`, `.flw`, and relative paths are left for the AIFlow interpreter. If the `.flw` file does not exist, HandyRecorder creates it from `micracts\*.rec` ordered from oldest to newest file time. On first v1.2+ run, existing root `.rec` files are copied into `micracts` for migration.
 
 Example:
 
 ```text
 ;= monthlyQA flow
-login.rec
+login
 prepare_env.ps1
 clean_cache.bat
 helper.exe
 ../imageQA/imageQA.flw
+../datanalysis/check_macro
 ```
 
 ## Main Controls
