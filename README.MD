@@ -8,7 +8,7 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.30`
+Current release: `1.43`
 
 ## Quick Start
 
@@ -20,7 +20,9 @@ Current release: `1.30`
 6. Press `Start` to replay the selected file.
 
 Press `Rec` when you want to record into the current active `.rec` file instead of creating a new file. New recorded commands insert after the active command line.
-Version `1.30` adds visual state feedback: pause status blinks red faster, while active Stop/Off buttons breathe slowly during running or recording.
+Version `1.30` adds visual state feedback: pause status blinks red, each running command activation alternates the active command text red/blue, and recording blinks the `Off` button text.
+Version `1.31` moves the Review zoom slider to the top of the review window so zoom changes do not move the slider under the mouse.
+Version `1.43` improves Review recrop: the recrop toolbar also appears when the saved comment image is missing, and the one-shot recrop can rebuild an index image from the command mouse point.
 
 ## Action Folder Layout
 
