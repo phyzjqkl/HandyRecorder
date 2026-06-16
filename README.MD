@@ -64,7 +64,7 @@ helper.exe
 ## Main Controls
 
 ```text
-Record Files       Select the active .rec file
+Micro Act          Select the active .rec file
 Add                Register existing .tsk or create a new task folder
 Task selector      Switch the active task folder while idle
 Record Auto        Run record files one by one
