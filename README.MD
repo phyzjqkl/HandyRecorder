@@ -8,13 +8,13 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.55`
+Current release: `1.60`
 
 ## Quick Start
 
 1. Put `HR.exe` in a writable folder.
 2. Run `HR.exe`.
-3. HandyRecorder creates `HandyRecorder.ini`, `<folder>.env`, `<folder>.tsk`, and `micracts\record1.rec` if needed.
+3. HandyRecorder creates `HandyRecorder.tasks.ini` beside `HR.exe` and uses the active task folder for `HandyRecorder.ini`, `<task>.env`, `<task>.tsk`, and `micracts\record1.rec`.
 4. Press `N` to create a new record file and start recording immediately.
 5. Press `Off` to stop and save.
 6. Press `Start` to replay the selected file.
@@ -24,24 +24,29 @@ Version `1.30` adds visual state feedback: pause status blinks red, each running
 Version `1.31` moves the Review zoom slider to the top of the review window so zoom changes do not move the slider under the mouse.
 Version `1.43` improves Review recrop: the recrop toolbar also appears when the saved comment image is missing, and the one-shot recrop can rebuild an index image from the command mouse point.
 Version `1.55` is the stable HandyRecorder core checkpoint. OCR and image-search experiments remain outside the published recorder build.
+Version `1.60` adds a task registry so one central `HR.exe` can work with several task folders without copying the executable into every task.
 
 ## Action Folder Layout
 
-HandyRecorder now stores macros in an action-folder layout:
+HandyRecorder stores macros in a task/action-folder layout. `HR.exe` can live outside the active task folder:
 
 ```text
-<action folder>\
+<HR.exe folder>\
   HR.exe
+  HandyRecorder.tasks.ini
+
+<task folder>\
   HandyRecorder.ini
-  <action folder>.env
-  <action folder>.tsk
+  <task folder>.env
+  <task folder>.tsk
   micracts\
     *.rec
   index\
   export\
+  blk\
 ```
 
-The Record Files list is loaded from `<action folder>.tsk`. Local rec macros are extensionless, while non-rec actions keep their extension. Lines starting with `;=` are comments or disabled actions and are hidden from the Record Files list. HandyRecorder shows only simple local rec entries from `micracts`; future AIFlow entries such as `.ps1`, `.bat`, `.exe`, `.tsk`, `.flw`, and relative paths are left for the AIFlow interpreter. If the `.tsk` file does not exist, HandyRecorder creates it from `micracts\*.rec` ordered from oldest to newest file time. On first v1.2+ run, existing root `.rec` files are copied into `micracts` for migration.
+The Record Files list is loaded from the active task folder's `<task>.tsk`. The task selector is loaded from `HandyRecorder.tasks.ini`; use `Add` to register an existing `.tsk` file or create a new task folder. Local rec macros are extensionless, while non-rec actions keep their extension. Lines starting with `;=` are comments or disabled actions and are hidden from the Record Files list. HandyRecorder shows only simple local rec entries from `micracts`; future AIFlow entries such as `.ps1`, `.bat`, `.exe`, `.tsk`, `.flw`, and relative paths are left for the AIFlow interpreter. If the `.tsk` file does not exist, HandyRecorder creates it from `micracts\*.rec` ordered from oldest to newest file time. On first v1.2+ run, existing root `.rec` files are copied into `micracts` for migration.
 
 Example:
 
@@ -60,6 +65,8 @@ helper.exe
 
 ```text
 Record Files       Select the active .rec file
+Add                Register existing .tsk or create a new task folder
+Task selector      Switch the active task folder while idle
 Record Auto        Run record files one by one
 SkipRes            Skip resolution mismatch protection
 Commands           View/edit the active command

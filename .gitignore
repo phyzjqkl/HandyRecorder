@@ -2,12 +2,18 @@
 *.au3
 Agents.md
 HandyRecorder.ini
+HandyRecorder.tasks.ini
 *.rec
+*.env
+*.tsk
+micracts/
+blk/
+export/
 index/
 *.png
 PUBLISH_TEST_CHECKLIST.md
+test/task_registry_tmp/
 
 # Publish artifacts intentionally allowed:
 !README.MD
 !HR.exe
-
