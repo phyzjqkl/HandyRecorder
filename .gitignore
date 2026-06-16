@@ -3,6 +3,7 @@
 Agents.md
 HandyRecorder.ini
 HandyRecorder.tasks.ini
+*.tasks
 *.rec
 *.env
 *.tsk

@@ -14,7 +14,7 @@ Current release: `1.60`
 
 1. Put `HR.exe` in a writable folder.
 2. Run `HR.exe`.
-3. HandyRecorder creates `HandyRecorder.tasks.ini` beside `HR.exe` and uses the active task folder for `HandyRecorder.ini`, `<task>.env`, `<task>.tsk`, and `micracts\record1.rec`.
+3. HandyRecorder creates `<flow>.tasks` beside `HR.exe` and uses the active task folder for `HandyRecorder.ini`, `<task>.env`, `<task>.tsk`, and `micracts\record1.rec`.
 4. Press `N` to create a new record file and start recording immediately.
 5. Press `Off` to stop and save.
 6. Press `Start` to replay the selected file.
@@ -33,12 +33,12 @@ HandyRecorder stores macros in a task/action-folder layout. `HR.exe` can live ou
 ```text
 <HR.exe folder>\
   HR.exe
-  HandyRecorder.tasks.ini
+  <flow>.tasks
 
 <task folder>\
   HandyRecorder.ini
-  <task folder>.env
-  <task folder>.tsk
+  <task>.env
+  <task>.tsk
   micracts\
     *.rec
   index\
@@ -46,7 +46,7 @@ HandyRecorder stores macros in a task/action-folder layout. `HR.exe` can live ou
   blk\
 ```
 
-The Record Files list is loaded from the active task folder's `<task>.tsk`. The task selector is loaded from `HandyRecorder.tasks.ini`; use `Add` to register an existing `.tsk` file or create a new task folder. Local rec macros are extensionless, while non-rec actions keep their extension. Lines starting with `;=` are comments or disabled actions and are hidden from the Record Files list. HandyRecorder shows only simple local rec entries from `micracts`; future AIFlow entries such as `.ps1`, `.bat`, `.exe`, `.tsk`, `.flw`, and relative paths are left for the AIFlow interpreter. If the `.tsk` file does not exist, HandyRecorder creates it from `micracts\*.rec` ordered from oldest to newest file time. On first v1.2+ run, existing root `.rec` files are copied into `micracts` for migration.
+The Record Files list is loaded from the active task folder's `<task>.tsk`. The task selector is loaded from `<flow>.tasks`; use `Add` to register an existing `.tsk` file or create a new task. New task naming uses the rule `task folder name == task .tsk base name`, so choosing `mechanical` creates `mechanical\mechanical.tsk`. Local rec macros are extensionless, while non-rec actions keep their extension. Lines starting with `;=` are comments or disabled actions and are hidden from the Record Files list. HandyRecorder shows only simple local rec entries from `micracts`; future AIFlow entries such as `.ps1`, `.bat`, `.exe`, `.tsk`, `.flw`, and relative paths are left for the AIFlow interpreter. If the `.tsk` file does not exist, HandyRecorder creates it from `micracts\*.rec` ordered from oldest to newest file time. On first v1.2+ run, existing root `.rec` files are copied into `micracts` for migration.
 
 Example:
 
