@@ -8,7 +8,7 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.60`
+Current release: `1.65`
 
 ## Quick Start
 
@@ -25,6 +25,7 @@ Version `1.31` moves the Review zoom slider to the top of the review window so z
 Version `1.43` improves Review recrop: the recrop toolbar also appears when the saved comment image is missing, and the one-shot recrop can rebuild an index image from the command mouse point.
 Version `1.55` is the stable HandyRecorder core checkpoint. OCR and image-search experiments remain outside the published recorder build.
 Version `1.60` adds a task registry so one central `HR.exe` can work with several task folders without copying the executable into every task.
+Version `1.65` improves playback pause handling for VM/Citrix workflows. A pause tagged with `manual_focus` now prompts `Ctrl+F9 to continue`, then waits for the user's target click before resuming playback.
 
 ## Action Folder Layout
 
