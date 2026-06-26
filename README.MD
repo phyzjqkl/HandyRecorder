@@ -8,7 +8,7 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.65`
+Current release: `1.80`
 
 ## Quick Start
 
@@ -26,6 +26,7 @@ Version `1.43` improves Review recrop: the recrop toolbar also appears when the 
 Version `1.55` is the stable HandyRecorder core checkpoint. OCR and image-search experiments remain outside the published recorder build.
 Version `1.60` adds a task registry so one central `HR.exe` can work with several task folders without copying the executable into every task.
 Version `1.65` improves playback pause handling for VM/Citrix workflows. A pause tagged with `manual_focus` now prompts `Ctrl+F9 to continue`, then waits for the user's target click before resuming playback.
+Version `1.80` brings the current task-driven editor surface: `Tasks` and `Recs` buttons in the main UI, a stronger TSK editor with `rec`/`blk`/`Variable` panes, nearby block-name entry, and separate block/fork controls.
 
 ## Action Folder Layout
 
@@ -65,8 +66,8 @@ helper.exe
 ## Main Controls
 
 ```text
-Micro Act          Select the active .rec file
-Add                Register existing .tsk or create a new task folder
+Recs               Create a new .rec file and start recording
+Tasks              Open task tools and register/create task folders
 Task selector      Switch the active task folder while idle
 Record Auto        Run record files one by one
 SkipRes            Skip resolution mismatch protection
@@ -76,7 +77,7 @@ Review             Show screenshot/rem review window
 A                  Delay between commands
 R                  Repeat delay
 L                  Reload INI and .rec files
-N                  New file and start recording
+Micro Act          Select the active .rec file
 S                  Save current file
 D                  Duplicate active file as *_cp1, *_cp2...
 + / -              Insert/delete command line
@@ -272,3 +273,4 @@ Useful settings include:
 - Use `F9` to pause/resume playback.
 - Use `Shift+F9` for emergency stop.
 - Use `SkipRes` carefully if the recorded and current screen layouts differ.
+
