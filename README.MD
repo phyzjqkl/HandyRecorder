@@ -8,7 +8,7 @@ The published build is:
 HR.exe
 ```
 
-Current release: `1.80`
+Current release: `1.90`
 
 ## Quick Start
 
@@ -27,6 +27,7 @@ Version `1.55` is the stable HandyRecorder core checkpoint. OCR and image-search
 Version `1.60` adds a task registry so one central `HR.exe` can work with several task folders without copying the executable into every task.
 Version `1.65` improves playback pause handling for VM/Citrix workflows. A pause tagged with `manual_focus` now prompts `Ctrl+F9 to continue`, then waits for the user's target click before resuming playback.
 Version `1.80` brings the current task-driven editor surface: `Tasks` and `Recs` buttons in the main UI, a stronger TSK editor with `rec`/`blk`/`Variable` panes, nearby block-name entry, and separate block/fork controls.
+Version 1.90 adds the first task variable workflow: command-level $ promotion for editable values, a variable popup that refreshes with the active command, pause/focus-pause text promotion from the real em_... text, and a clearer debug array chooser for compiled variable inspection.
 
 ## Action Folder Layout
 
@@ -273,4 +274,5 @@ Useful settings include:
 - Use `F9` to pause/resume playback.
 - Use `Shift+F9` for emergency stop.
 - Use `SkipRes` carefully if the recorded and current screen layouts differ.
+
 
