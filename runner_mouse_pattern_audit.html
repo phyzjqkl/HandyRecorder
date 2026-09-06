@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>ExecuteCommand Mouse Pattern Audit</title>
+<style>
+body{margin:0;font-family:"Microsoft YaHei",Segoe UI,Arial,sans-serif;background:#f5f6f8;color:#1f2933}
+header{position:sticky;top:0;background:#17202a;color:white;padding:10px 14px;z-index:2;box-shadow:0 1px 5px #999}
+h1{font-size:18px;margin:0 0 4px}.meta{font-size:12px;color:#d6dde6}.controls{float:right;font-size:12px}.wrap{padding:10px}
+table{border-collapse:collapse;width:100%;table-layout:fixed;background:white;border:1px solid #d7dce2}
+th{position:sticky;top:58px;background:#e9edf2;z-index:1;text-align:left;padding:6px;border-bottom:1px solid #ccd3da}
+td{vertical-align:top;border-bottom:1px solid #edf0f3}
+.ln{width:50px;text-align:right;color:#6b7280;background:#f2f4f7;padding:4px 7px;font-family:Consolas,monospace}
+.code{width:54%;background:#0f1720;color:#d7e4f2}.code pre{margin:0;padding:4px 8px;white-space:pre-wrap;word-break:break-word;font-family:Consolas,"Courier New",monospace;font-size:12px;line-height:1.35}
+.explain{width:36%;padding:5px 8px;font-size:13px;line-height:1.45;background:#fff}
+.noteHead{width:10%}.note{width:10%;background:#f1f3f5;padding:2px 4px;border-left:1px solid #cfd6dd}
+.note input{width:96%;box-sizing:border-box;border:1px solid #bac3cc;background:#f8fafc;font-size:12px;padding:2px 4px}
+.note input:focus{outline:2px solid #f59e0b}.note input:not(:placeholder-shown){background:#e9eef5}
+.code:hover,.explain:hover{outline:2px solid #4aa3ff}tr:hover .ln{background:#dbeafe}tr:hover .explain{background:#f8fbff}
+button{padding:2px 8px;margin-left:4px}input#lineNo{width:80px;padding:2px 5px}[data-lang='en'],[data-ui='en']{display:none}body.lang-en [data-lang='zh'],body.lang-en [data-ui='zh']{display:none}body.lang-en [data-lang='en'],body.lang-en [data-ui='en']{display:inline}
+</style>
+<script>
+const NOTE_KEY = "source_audit_notes_//DS224plus/ConnieServer/phyzjqk/scripts/handyrecorder/runner.au3_647_668";
+function loadNotes(){let n={};try{n=JSON.parse(localStorage.getItem(NOTE_KEY)||"{}")}catch(e){}document.querySelectorAll(".note input").forEach(i=>{if(n[i.dataset.line])i.value=n[i.dataset.line]})}
+function saveNote(el){let n={};try{n=JSON.parse(localStorage.getItem(NOTE_KEY)||"{}")}catch(e){}if(el.value.trim()==="")delete n[el.dataset.line];else n[el.dataset.line]=el.value;localStorage.setItem(NOTE_KEY,JSON.stringify(n))}
+function jumpLine(){var n=document.getElementById('lineNo').value.trim();var el=document.getElementById('L'+n);if(el){el.scrollIntoView({behavior:'smooth',block:'center'});el.style.outline='3px solid #ef4444';setTimeout(()=>el.style.outline='',1400)}}
+function setLang(lang){document.body.classList.toggle('lang-en',lang==='en');localStorage.setItem(NOTE_KEY+'_lang',lang)}
+window.addEventListener('DOMContentLoaded',()=>{loadNotes();setLang(localStorage.getItem(NOTE_KEY+'_lang')||'zh')});
+</script>
+</head>
+<body>
+<header><div class="controls"><span data-ui="zh">语言</span><span data-ui="en">Language</span> <button onclick="setLang('zh')">中文</button><button onclick="setLang('en')">English</button> <span data-ui="zh">跳到行</span><span data-ui="en">Line</span> <input id="lineNo" type="number" min="1" max="22" onkeydown="if(event.key==='Enter')jumpLine()"><button onclick="jumpLine()">Go</button></div><h1>ExecuteCommand Mouse Pattern Audit</h1><div class="meta">\\DS224plus\ConnieServer\phyzjqk\scripts\handyrecorder\runner.au3 | block lines 647-668 | <span data-ui="zh">总行数</span><span data-ui="en">lines</span>: 22 | <span data-ui="zh">备注保存在浏览器 localStorage</span><span data-ui="en">notes saved in browser localStorage</span></div></header>
+<div class="wrap"><table><thead><tr><th style="width:50px"><span data-ui="zh">行</span><span data-ui="en">Line</span></th><th><span data-ui="zh">源码</span><span data-ui="en">Source</span></th><th><span data-ui="zh">解释</span><span data-ui="en">Explanation</span></th><th class="noteHead"><span data-ui="zh">备注</span><span data-ui="en">Note</span></th></tr></thead><tbody>
+<tr id='L647'><td class='ln'>647</td><td class='code'><pre>    ; NORMAL MOUSE</pre></td><td class='explain'><span data-lang='zh'>注释：说明当前代码块的用途或上下文，不直接参与主要执行逻辑。</span><span data-lang='en'>Comment: documents the purpose or context of this code block and usually does not affect main execution.</span></td><td class='note'><input data-line='647' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L648'><td class='ln'>648</td><td class='code'><pre>    ; M_P1,x,y,L,repeat,delay,rem_mouse</pre></td><td class='explain'><span data-lang='zh'>注释：说明当前代码块的用途或上下文，不直接参与主要执行逻辑。</span><span data-lang='en'>Comment: documents the purpose or context of this code block and usually does not affect main execution.</span></td><td class='note'><input data-line='648' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L649'><td class='ln'>649</td><td class='code'><pre>    ; C means center/middle mouse button.</pre></td><td class='explain'><span data-lang='zh'>注释：说明当前代码块的用途或上下文，不直接参与主要执行逻辑。</span><span data-lang='en'>Comment: documents the purpose or context of this code block and usually does not affect main execution.</span></td><td class='note'><input data-line='649' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L650'><td class='ln'>650</td><td class='code'><pre>    ; =====================================</pre></td><td class='explain'><span data-lang='zh'>注释：说明当前代码块的用途或上下文，不直接参与主要执行逻辑。</span><span data-lang='en'>Comment: documents the purpose or context of this code block and usually does not affect main execution.</span></td><td class='note'><input data-line='650' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L651'><td class='ln'>651</td><td class='code'><pre></pre></td><td class='explain'></td><td class='note'></td></tr>
+<tr id='L652'><td class='ln'>652</td><td class='code'><pre>    If StringLeft($cmd, 2) = &quot;M_&quot; Then</pre></td><td class='explain'><span data-lang='zh'>条件判断：检查参数、错误状态或分支条件。</span><span data-lang='en'>Conditional check: validates parameters, error states, or branch conditions.</span></td><td class='note'><input data-line='652' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L653'><td class='ln'>653</td><td class='code'><pre></pre></td><td class='explain'></td><td class='note'></td></tr>
+<tr id='L654'><td class='ln'>654</td><td class='code'><pre>        If $p[0] &lt; 4 Then Return</pre></td><td class='explain'><span data-lang='zh'>条件判断：检查参数、错误状态或分支条件。</span><span data-lang='en'>Conditional check: validates parameters, error states, or branch conditions.</span></td><td class='note'><input data-line='654' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L655'><td class='ln'>655</td><td class='code'><pre></pre></td><td class='explain'></td><td class='note'></td></tr>
+<tr id='L656'><td class='ln'>656</td><td class='code'><pre>        Local $x = Number($p[2])</pre></td><td class='explain'><span data-lang='zh'>局部变量声明：只在当前函数或代码块中保存临时状态。</span><span data-lang='en'>Local variable declaration: stores temporary state within the current function or block.</span></td><td class='note'><input data-line='656' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L657'><td class='ln'>657</td><td class='code'><pre>        Local $y = Number($p[3])</pre></td><td class='explain'><span data-lang='zh'>局部变量声明：只在当前函数或代码块中保存临时状态。</span><span data-lang='en'>Local variable declaration: stores temporary state within the current function or block.</span></td><td class='note'><input data-line='657' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L658'><td class='ln'>658</td><td class='code'><pre>        Local $btn = $p[4]</pre></td><td class='explain'><span data-lang='zh'>局部变量声明：只在当前函数或代码块中保存临时状态。</span><span data-lang='en'>Local variable declaration: stores temporary state within the current function or block.</span></td><td class='note'><input data-line='658' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L659'><td class='ln'>659</td><td class='code'><pre>        Local $repeat = _GetRepeat($p, 5)</pre></td><td class='explain'><span data-lang='zh'>局部变量声明：只在当前函数或代码块中保存临时状态。</span><span data-lang='en'>Local variable declaration: stores temporary state within the current function or block.</span></td><td class='note'><input data-line='659' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L660'><td class='ln'>660</td><td class='code'><pre>        Local $mouseDelay = _GetDelayMs($p, 6)</pre></td><td class='explain'><span data-lang='zh'>局部变量声明：只在当前函数或代码块中保存临时状态。</span><span data-lang='en'>Local variable declaration: stores temporary state within the current function or block.</span></td><td class='note'><input data-line='660' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L661'><td class='ln'>661</td><td class='code'><pre></pre></td><td class='explain'></td><td class='note'></td></tr>
+<tr id='L662'><td class='ln'>662</td><td class='code'><pre>        If StringLeft($cmd, 3) = &quot;M_D&quot; Then</pre></td><td class='explain'><span data-lang='zh'>条件判断：检查参数、错误状态或分支条件。</span><span data-lang='en'>Conditional check: validates parameters, error states, or branch conditions.</span></td><td class='note'><input data-line='662' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L663'><td class='ln'>663</td><td class='code'><pre>            For $i = 1 To $repeat</pre></td><td class='explain'><span data-lang='zh'>循环：遍历像素、数组、行列或候选位置。</span><span data-lang='en'>Loop: iterates over pixels, arrays, rows, columns, or candidate positions.</span></td><td class='note'><input data-line='663' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L664'><td class='ln'>664</td><td class='code'><pre>                MouseMove($x, $y, 0)</pre></td><td class='explain'><span data-lang='zh'>鼠标动作：移动、点击、按下、释放或滚轮操作。</span><span data-lang='en'>Mouse action: moves, clicks, presses, releases, or scrolls the mouse.</span></td><td class='note'><input data-line='664' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L665'><td class='ln'>665</td><td class='code'><pre>                MouseDown(_MouseButtonName($btn))</pre></td><td class='explain'><span data-lang='zh'>鼠标动作：移动、点击、按下、释放或滚轮操作。</span><span data-lang='en'>Mouse action: moves, clicks, presses, releases, or scrolls the mouse.</span></td><td class='note'><input data-line='665' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L666'><td class='ln'>666</td><td class='code'><pre>                If $mouseDelay &gt; 0 Then</pre></td><td class='explain'><span data-lang='zh'>条件判断：检查参数、错误状态或分支条件。</span><span data-lang='en'>Conditional check: validates parameters, error states, or branch conditions.</span></td><td class='note'><input data-line='666' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L667'><td class='ln'>667</td><td class='code'><pre>                    If Not SafeSleep($mouseDelay) Then Return</pre></td><td class='explain'><span data-lang='zh'>条件判断：检查参数、错误状态或分支条件。</span><span data-lang='en'>Conditional check: validates parameters, error states, or branch conditions.</span></td><td class='note'><input data-line='667' placeholder='...' oninput='saveNote(this)'></td></tr>
+<tr id='L668'><td class='ln'>668</td><td class='code'><pre>                EndIf</pre></td><td class='explain'><span data-lang='zh'>条件分支边界：切换或结束当前 If 判断分支。</span><span data-lang='en'>Conditional branch boundary: switches or closes the current If branch.</span></td><td class='note'><input data-line='668' placeholder='...' oninput='saveNote(this)'></td></tr>
+</tbody></table></div>
+</body>
+</html>

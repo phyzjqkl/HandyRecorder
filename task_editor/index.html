@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HandyRecorder - Visual Task Studio</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Top Toolbar -->
+  <header class="top-header">
+    <div class="brand-section">
+      <span class="brand-badge">TASK STUDIO</span>
+      <div class="task-title">
+        <span>Task Flow:</span>
+        <span class="filename" id="currentTaskLabel">chartcheck.tsk</span>
+      </div>
+    </div>
+
+    <div class="toolbar-actions">
+      <!-- Hidden File Inputs (Supports multi-file selection & folders) -->
+      <input type="file" id="tskFileInput" accept=".tsk,.txt,.rec,.blk,.env" multiple style="display:none;">
+      <input type="file" id="envFileInput" accept=".env,.ini" style="display:none;">
+      <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none;">
+
+      <!-- Quick Preset & Recent Tasks Selector -->
+      <select id="sampleTaskSelect" class="btn" style="background:var(--bg-card);color:var(--text-main);padding:4px 7px;font-size:11px;" title="Load Sample Task Flow or Recent Tasks">
+        <optgroup label="Presets">
+          <option value="chartcheck.tsk">Preset: chartcheck.tsk (SelRx, ChkDosimetry...)</option>
+          <option value="handyrecorder.tsk">Preset: handyrecorder.tsk</option>
+          <option value="completetx.tsk">Preset: completetx.tsk</option>
+          <option value="branch_sample.tsk">Preset: Branching Fork.tsk</option>
+        </optgroup>
+        <optgroup label="Recent Tasks" id="recentTasksGroup">
+          <option disabled>(No recent tasks)</option>
+        </optgroup>
+      </select>
+
+      <!-- Layout Mode Selector -->
+      <select id="layoutModeSelect" class="btn" style="background:var(--bg-card);color:#64ffda;padding:4px 7px;font-size:11px;font-weight:600;" title="Switch Flow Layout Mode">
+        <option value="horizontal">➡️ Horizontal Grid (4-Col Row)</option>
+        <option value="vertical_1col">⬇️ Vertical (1-Column Pipe)</option>
+        <option value="vertical_2col">⬇️ Vertical (2-Column Flow)</option>
+        <option value="vertical_3col">⬇️ Vertical (3-Column Flow)</option>
+        <option value="vertical_4col">⬇️ Vertical (4-Column Flow)</option>
+      </select>
+
+      <button class="btn" id="btnResetWires" title="Reset all wire routing back to clean obstacle-avoiding default channels">
+        <span>🔄</span> Reset Wires
+      </button>
+
+      <button class="btn btn-primary" id="btnOpenTsk" title="Open .tsk Task File or .rec files">
+        <span>📂</span> Open .tsk / Files
+      </button>
+
+      <button class="btn" id="btnOpenFolder" title="Open Complete Task Folder with all micracts">
+        <span>📁</span> Open Folder
+      </button>
+
+      <button class="btn" id="btnOpenEnv" title="Open .env Variables File">
+        <span>⚙️</span> Open .env
+      </button>
+
+      <div style="width: 1px; height: 18px; background: var(--border-color); margin: 0 2px;"></div>
+
+      <button class="btn" id="btnFitAll" title="Fit & center the whole task flow onto canvas">
+        <span>📐</span> Fit All
+      </button>
+
+      <div style="width: 1px; height: 18px; background: var(--border-color); margin: 0 2px;"></div>
+
+      <button class="btn btn-success" id="btnSaveTsk" title="Save / Export updated .tsk file">
+        <span>💾</span> Save .tsk
+      </button>
+
+      <button class="btn btn-accent" id="btnSaveEnv" title="Save / Export updated .env variables file">
+        <span>📥</span> Save .env
+      </button>
+
+      <button class="btn" id="btnExportFlow" title="Export complete visual flow graph JSON (.flw)">
+        <span>🗺️</span> Export .flw
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Workspace Area -->
+  <main class="main-workspace">
+    <!-- Center 2D Vector Canvas Area -->
+    <section class="canvas-wrapper">
+      <!-- Floating Left-Side Always-on-Top Control & Function Tool Pane -->
+      <aside class="floating-left-palette" id="leftPalette">
+        <div class="palette-header">
+          <span>🛠️ TOOLS</span>
+        </div>
+
+        <!-- Variables -->
+        <div class="palette-group">
+          <span class="palette-group-title">Vars</span>
+          <div class="palette-btn-grid">
+            <button class="palette-tool-btn" data-tool="var_static" title="Add Static Variable Statement (e.g. $A = 10)">$x Var</button>
+            <button class="palette-tool-btn" data-tool="var_2d" title="Add 2D Array Statement">[2D] Grid</button>
+          </div>
+        </div>
+
+        <div class="palette-divider"></div>
+
+        <!-- Math & Equations -->
+        <div class="palette-group">
+          <span class="palette-group-title">Math</span>
+          <div class="palette-btn-grid">
+            <button class="palette-tool-btn math-btn" data-tool="math_add" title="Add Addition Statement ($A = $B + 2)">+ Add</button>
+            <button class="palette-tool-btn math-btn" data-tool="math_sub" title="Add Subtraction Statement ($A = $B - 1)">- Sub</button>
+            <button class="palette-tool-btn math-btn" data-tool="math_mul" title="Add Multiplication Statement ($A = $B * 1.05)">* Mul</button>
+            <button class="palette-tool-btn math-btn" data-tool="math_div" title="Add Division Statement ($A = $B / 2)">/ Div</button>
+            <button class="palette-tool-btn math-btn" data-tool="math_func" title="Add Custom Equation ($result = f($x))">f(x) Eq</button>
+          </div>
+        </div>
+
+        <div class="palette-divider"></div>
+
+        <!-- Control Flow -->
+        <div class="palette-group">
+          <span class="palette-group-title">Flow</span>
+          <div class="palette-btn-grid">
+            <button class="palette-tool-btn flow-btn" data-tool="flow_if" title="Add Condition / IF Branch with True/False Pins">IF</button>
+            <button class="palette-tool-btn flow-btn" data-tool="flow_loop" title="Add Loop Container Block">LOOP</button>
+            <button class="palette-tool-btn flow-btn" data-tool="flow_switch" title="Add Multi-case Switch Block">SWITCH</button>
+          </div>
+        </div>
+
+        <div class="palette-divider"></div>
+
+        <!-- Actions -->
+        <div class="palette-group">
+          <span class="palette-group-title">Action</span>
+          <div class="palette-btn-grid">
+            <button class="palette-tool-btn" data-tool="action_rec" title="Add Rec Macro (.rec)">+ Rec</button>
+            <button class="palette-tool-btn" data-tool="action_blk" title="Add Sub-Block (SubVI / Mini-TSK)">+ Sub-Block</button>
+            <button class="palette-tool-btn" data-tool="action_pause" title="Add Manual Pause Gate">+ Pause</button>
+          </div>
+        </div>
+      </aside>
+
+      <canvas id="graphCanvas"></canvas>
+
+      <!-- Right-Side Vertical Cursor Scrollbar -->
+      <div class="canvas-vertical-scrollbar" id="canvasScrollbar">
+        <div class="scrollbar-track" id="canvasScrollTrack">
+          <div class="scrollbar-thumb" id="canvasScrollThumb"></div>
+        </div>
+      </div>
+
+      <!-- Bottom Horizontal Cursor Scrollbar -->
+      <div class="canvas-horizontal-scrollbar" id="canvasHScrollbar">
+        <div class="scrollbar-track-h" id="canvasHScrollTrack">
+          <div class="scrollbar-thumb-h" id="canvasHScrollThumb"></div>
+        </div>
+      </div>
+
+      <!-- Floating Canvas View Controls -->
+      <div class="canvas-controls">
+        <button class="btn" id="btnZoomIn" title="Zoom In">🔍 +</button>
+        <button class="btn" id="btnZoomOut" title="Zoom Out">🔍 -</button>
+        <button class="btn" id="btnResetZoom" title="Reset View (100%)">⟲ Reset</button>
+      </div>
+
+      <!-- Drag & Drop Overlay -->
+      <div class="drop-overlay" id="dropOverlay">
+        <span style="font-size: 36px;">📥</span>
+        <p>Drop .tsk, folder or .rec files here to load</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Bottom Status Bar -->
+  <footer class="bottom-statusbar">
+    <div class="status-left">
+      <span><span class="status-indicator"></span> 100% Offline Mode</span>
+      <span id="statusTaskName">chartcheck.tsk</span>
+      <span id="statusNodeCount">0 Blocks</span>
+    </div>
+    <div class="status-right">
+      <span>💡 Hollow Wires = Execution Sequence in .tsk | Drag wire handle (orange dot) to bend in 2D | Click wire to cut (✂)</span>
+    </div>
+  </footer>
+
+  <!-- 1. Rec ASCII Command Editor Modal (Split: Left Code + Right Cmds/Vars) -->
+  <div class="modal-backdrop" id="recEditorModal">
+    <div class="modal-rec-split-dialog">
+      <div class="modal-split-header">
+        <div class="title-area">
+          <span style="font-size: 13px; font-weight: 700;">Rec Command Editor:</span>
+          <span class="file-badge" id="recFileBadge">SelRx.rec</span>
+        </div>
+        <button class="btn btn-icon-only" id="recModalClose" style="background:transparent;border:none;font-size:15px;color:var(--text-muted);cursor:pointer;">✕</button>
+      </div>
+
+      <div class="modal-split-body">
+        <!-- Left: ASCII Monospace Textarea -->
+        <div class="split-left-editor">
+          <textarea class="ascii-code-textarea" id="asciiTextarea" spellcheck="false" placeholder=";= Commands&#10;M_P1,500,300,L,1,,rem_click"></textarea>
+        </div>
+
+        <!-- Right: Quick Commands & Variables -->
+        <div class="split-right-column">
+          <div>
+            <div class="right-section-title">Quick Commands:</div>
+            <div class="quick-cmd-grid">
+              <button class="btn-cmd-item" data-cmd='P_P1,"Please verify action",1,,rem_pause'>+P Pause</button>
+              <button class="btn-cmd-item" data-cmd='P_P1,"manual_focus",1,,rem_focus'>+K Focus</button>
+              <button class="btn-cmd-item" data-cmd='T_D1,1.0,1,,rem_delay'>+T Delay</button>
+              <button class="btn-cmd-item" data-cmd='S_S1,"sample text",1,,rem_string'>+C String</button>
+              <button class="btn-cmd-item" data-cmd='${patient_id}'>+V Var</button>
+              <button class="btn-cmd-item" data-cmd='M_P1,500,300,L,1,,rem_click'>+M Click</button>
+              <button class="btn-cmd-item" data-cmd='MM_M1,500,300,0,1,,rem_move'>+F8 Move</button>
+            </div>
+          </div>
+
+          <div class="var-input-area">
+            <div class="right-section-title">Variables (.env):</div>
+            <textarea class="var-textarea-compact" id="recVarTextarea" placeholder="$patient_id=PA102&#10;$timeout=10" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-split-footer">
+        <button class="btn" id="btnDeleteRecNode" style="background:rgba(224, 108, 117, 0.15);border-color:#e06c75;color:#e06c75;">🗑️ Delete Block</button>
+        <div style="display:flex; gap:6px;">
+          <button class="btn" id="recModalCancel">Cancel</button>
+          <button class="btn btn-primary" id="recModalSave">💾 Save & Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Mini-Canvas Sub-Task Modal for .blk (Mini-TSK) -->
+  <div class="modal-backdrop" id="blkMiniCanvasModal">
+    <div class="modal-minicanvas-dialog">
+      <div class="modal-compact-header">
+        <div class="title-area">
+          <span style="font-size: 13px; font-weight: 700;">Sub-Block (Mini-TSK Flow):</span>
+          <span class="file-badge" id="blkFileBadge" style="background:rgba(74,71,163,0.25);color:#c5a3ff;">recordall.blk</span>
+          <span class="step-tag-pill" id="blkSubCountBadge">4 Sub-Steps</span>
+        </div>
+        <button class="btn btn-icon-only" id="blkModalClose" style="background:transparent;border:none;font-size:15px;color:var(--text-muted);cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Mini Canvas Toolbar -->
+      <div style="padding: 5px 12px; background: #14171f; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-size:11px;color:var(--text-muted);">Mini-TSK Sub-Flow: Sub-recs executed in order</span>
+        <button class="btn btn-quick-cmd" id="btnAddSubRec">+ Add Sub-Rec</button>
+      </div>
+
+      <!-- Mini 2D Vector Canvas -->
+      <div class="minicanvas-container">
+        <canvas id="miniCanvas"></canvas>
+      </div>
+
+      <div class="modal-compact-footer">
+        <button class="btn" id="btnDeleteBlkNode" style="background:rgba(224, 108, 117, 0.15);border-color:#e06c75;color:#e06c75;">🗑️ Delete Block</button>
+        <div style="display:flex; gap:6px;">
+          <button class="btn" id="blkModalCancel">Cancel</button>
+          <button class="btn btn-accent" id="blkModalSave">💾 Save Mini-TSK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Sentence Statement / Equation Edit Dialog -->
+  <div class="modal-backdrop" id="equationModal">
+    <div class="modal-equation-dialog">
+      <div class="modal-compact-header">
+        <div class="title-area">
+          <span style="font-size: 13px; font-weight: 700;">f(x) Sentence Statement Editor:</span>
+        </div>
+        <button class="btn btn-icon-only" id="equationModalClose" style="background:transparent;border:none;font-size:15px;color:var(--text-muted);cursor:pointer;">✕</button>
+      </div>
+
+      <div style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Statement Expression (e.g. $A = $B + 2)</label>
+          <input type="text" class="equation-input-box" id="equationInput" placeholder="$A = $B + 2" spellcheck="false">
+        </div>
+
+        <div style="display: flex; gap: 10px; background: #14171e; padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 11px; font-family: var(--font-mono);">
+          <div><span style="color:var(--text-dim);">Input Pin:</span> <span style="color:#ffb86c;" id="equationInVarDisplay">$B</span></div>
+          <div style="margin: 0 8px; color: var(--border-color);">|</div>
+          <div><span style="color:var(--text-dim);">Output Pin:</span> <span style="color:#50fa7b;" id="equationOutVarDisplay">$A</span></div>
+        </div>
+        <span style="font-size: 10px; color: var(--text-dim);">💡 Pure sentence statement written directly into <code>.tsk</code>. No <code>.rec</code> file created.</span>
+      </div>
+
+      <div class="modal-compact-footer">
+        <button class="btn" id="btnDeleteEquationNode" style="background:rgba(224, 108, 117, 0.15);border-color:#e06c75;color:#e06c75;">🗑️ Delete</button>
+        <div style="display:flex; gap:6px;">
+          <button class="btn" id="equationModalCancel">Cancel</button>
+          <button class="btn btn-primary" id="equationModalSave">💾 Save Statement</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Quick Insert Command Line Modal (One-Line Edit Box) -->
+  <div class="modal-backdrop" id="insertCmdModal">
+    <div class="modal-equation-dialog" style="width: 480px;">
+      <div class="modal-compact-header">
+        <div class="title-area">
+          <span style="font-size: 13px; font-weight: 700;">⚡ Insert Command Line Statement:</span>
+        </div>
+        <button class="btn btn-icon-only" id="insertCmdModalClose" style="background:transparent;border:none;font-size:15px;color:var(--text-muted);cursor:pointer;">✕</button>
+      </div>
+
+      <div style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="display: flex; flex-direction: column; gap: 4px;">
+          <label style="font-size: 11px; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Command Line (e.g. $A = $B + 2, script.bat, IF ($retry > 3), PAUSE 2)</label>
+          <input type="text" class="equation-input-box" id="insertCmdLineInput" placeholder="$A = $B + 2" autofocus spellcheck="false">
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; background: #14171e; padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border-color); font-size: 11px; font-family: var(--font-mono);">
+          <div>
+            <span style="color:var(--text-dim);">Type: </span>
+            <span style="color:#64ffda; font-weight: 700;" id="insertCmdTypeBadge">f(x) STATEMENT</span>
+          </div>
+          <div id="insertCmdVarPins" style="display: flex; gap: 8px;">
+            <div><span style="color:var(--text-dim);">In:</span> <span style="color:#ffb86c;" id="insertCmdInVar">$B</span></div>
+            <div style="color: var(--border-color);">|</div>
+            <div><span style="color:var(--text-dim);">Out:</span> <span style="color:#50fa7b;" id="insertCmdOutVar">$A</span></div>
+          </div>
+        </div>
+        <span style="font-size: 10px; color: var(--text-dim);">💡 Type any equation, script (.bat/.ps1), control flow (IF/LOOP), or pause. Press Enter to insert.</span>
+      </div>
+
+      <div class="modal-compact-footer">
+        <div></div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn" id="insertCmdModalCancel">Cancel</button>
+          <button class="btn btn-primary" id="insertCmdModalSubmit">⚡ Insert Command</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Custom Context Menu for Nodes & Canvas (Categorized) -->
+  <div class="custom-context-menu" id="canvasContextMenu" style="display: none;">
+    <div class="ctx-menu-header" id="ctxMenuHeader">Block Options</div>
+    
+    <!-- 📁 Category: Files -->
+    <div class="ctx-menu-item" data-action="insert_rec">
+      <span class="ctx-icon">📼</span>
+      <span class="ctx-label">Insert Local .rec Macro</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_lib_rec">
+      <span class="ctx-icon">🏛️</span>
+      <span class="ctx-label">Insert LIB .rec (Module\Rec)</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_blk">
+      <span class="ctx-icon">📁</span>
+      <span class="ctx-label">Insert .blk Sub-Task</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_script">
+      <span class="ctx-icon">⚙️</span>
+      <span class="ctx-label">Insert External (.bat/.ps1/.exe)</span>
+    </div>
+
+    <div class="ctx-menu-divider"></div>
+
+    <!-- 🔀 Category: Flow Control -->
+    <div class="ctx-menu-item" data-action="insert_flow_if">
+      <span class="ctx-icon">🔀</span>
+      <span class="ctx-label">Insert IF / ELSE / ENDIF</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_flow_loop">
+      <span class="ctx-icon">🔁</span>
+      <span class="ctx-label">Insert LOOP / ENDLOOP</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_flow_switch">
+      <span class="ctx-icon">🎚️</span>
+      <span class="ctx-label">Insert SWITCH / CASE</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_flow_break">
+      <span class="ctx-icon">⏹️</span>
+      <span class="ctx-label">Insert BREAK</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_flow_continue">
+      <span class="ctx-icon">⏭️</span>
+      <span class="ctx-label">Insert CONTINUE</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_flow_return">
+      <span class="ctx-icon">🚪</span>
+      <span class="ctx-label">Insert RETURN</span>
+    </div>
+
+    <div class="ctx-menu-divider"></div>
+
+    <!-- 💲 Category: Variables & Math -->
+    <div class="ctx-menu-item" data-action="insert_var">
+      <span class="ctx-icon">💲</span>
+      <span class="ctx-label">Insert Variable ($A = 10)</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_math">
+      <span class="ctx-icon">🧮</span>
+      <span class="ctx-label">Insert Math ($A = $B + 1)</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_array">
+      <span class="ctx-icon">📊</span>
+      <span class="ctx-label">Insert Array / Table ($grid[0])</span>
+    </div>
+
+    <div class="ctx-menu-divider"></div>
+
+    <!-- ⚡ Category: Commands & Extensions -->
+    <div class="ctx-menu-item" data-action="insert_command_line">
+      <span class="ctx-icon">⚡</span>
+      <span class="ctx-label">One-Line Command Input...</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_pause">
+      <span class="ctx-icon">⏸️</span>
+      <span class="ctx-label">Insert PAUSE Gate</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_imagesearch">
+      <span class="ctx-icon">🔍</span>
+      <span class="ctx-label">Insert Image Search [EXT]</span>
+    </div>
+    <div class="ctx-menu-item" data-action="insert_ocr">
+      <span class="ctx-icon">👁️</span>
+      <span class="ctx-label">Insert OCR Text [EXT]</span>
+    </div>
+
+    <div class="ctx-menu-divider"></div>
+
+    <!-- ✏️ Category: Edit & Actions -->
+    <div class="ctx-menu-item" data-action="edit">
+      <span class="ctx-icon">✏️</span>
+      <span class="ctx-label">Edit Code / Properties</span>
+    </div>
+    <div class="ctx-menu-item" data-action="toggle_comment">
+      <span class="ctx-icon">🔇</span>
+      <span class="ctx-label">Disable / Enable (;=)</span>
+    </div>
+    <div class="ctx-menu-item" data-action="duplicate">
+      <span class="ctx-icon">📑</span>
+      <span class="ctx-label">Duplicate Block</span>
+    </div>
+
+    <div class="ctx-menu-divider"></div>
+
+    <div class="ctx-menu-item ctx-danger" data-action="delete">
+      <span class="ctx-icon">🗑️</span>
+      <span class="ctx-label">Delete Block</span>
+    </div>
+  </div>
+
+  <!-- 5. Task Validation Error Dialog (Blocks export on fatal syntax/grammar errors) -->
+  <div class="modal-backdrop" id="validationModal">
+    <div class="modal-equation-dialog" style="width: 560px;">
+      <div class="modal-compact-header" style="background: rgba(239, 68, 68, 0.15); border-bottom: 1px solid #ef4444;">
+        <div class="title-area">
+          <span style="font-size: 13px; font-weight: 700; color: #ef4444;">⚠️ Task Validation Errors (Export Blocked):</span>
+        </div>
+        <button class="btn btn-icon-only" id="validationModalClose" style="background:transparent;border:none;font-size:15px;color:var(--text-muted);cursor:pointer;">✕</button>
+      </div>
+
+      <div style="padding: 14px; display: flex; flex-direction: column; gap: 10px;">
+        <span style="font-size: 11px; color: var(--text-muted);">
+          HandyRecorder requires 100% grammar-correct scripts. The following fatal errors must be fixed before saving:
+        </span>
+
+        <div id="validationErrorList" style="max-height: 220px; overflow-y: auto; background: #14171e; border: 1px solid var(--border-color); border-radius: 4px; padding: 8px; font-family: var(--font-mono); font-size: 11px; display: flex; flex-direction: column; gap: 6px;">
+        </div>
+
+        <span style="font-size: 10px; color: var(--text-dim);">💡 Click on any block on the canvas to inspect, edit or delete unrecognized lines.</span>
+      </div>
+
+      <div class="modal-compact-footer">
+        <div></div>
+        <button class="btn btn-primary" id="validationModalOk">Close & Fix</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Pure Local Scripts (100% Offline) -->
+  <script src="js/tsk_env_parser.js"></script>
+  <script src="js/rec_commands_db.js"></script>
+  <script src="js/canvas_engine.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

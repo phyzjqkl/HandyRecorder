@@ -1,0 +1,703 @@
+#include <GUIConstantsEx.au3>
+
+Global Const $HR_VERSION = "1.92"
+
+Global $gExeDir = @ScriptDir
+Global $gFlowName = ""
+Global $gTaskRegistryFile = ""
+Global $appPath = @ScriptDir
+Global $gTaskActive = False
+Global $iniFile
+
+Global $gui
+Global $inputAction
+Global $inputRepeat
+Global $chkRepeat
+Global $chkFileAuto
+Global $chkReanchor
+Global $chkSkipRes
+Global $currentFile
+
+Func HR_InitRuntimePaths($exeDir = "", $taskPath = "")
+
+    If $exeDir = "" Then $exeDir = @ScriptDir
+
+    $gExeDir = HR_NormalizePath($exeDir)
+    If $gExeDir = "" Then $gExeDir = @ScriptDir
+    $gFlowName = HR_TaskNameFromPath($gExeDir)
+    If $gFlowName = "" Then $gFlowName = "handyrecorder"
+    $gTaskRegistryFile = $gExeDir & "\" & $gFlowName & ".tasks"
+    _HR_MigrateOldTaskRegistry()
+
+    Local $chosenTask = HR_NormalizePath($taskPath)
+    If $chosenTask = "" Then $chosenTask = HR_NormalizePath(_HR_CommandLineTaskPath())
+    If $chosenTask = "" Then $chosenTask = HR_NormalizePath(HR_TaskRegistryActivePath())
+
+    If $chosenTask = "" And _HR_LooksLikeTaskFolder($gExeDir) Then $chosenTask = $gExeDir
+
+    If $chosenTask = "" Then
+        HR_ClearActiveTask()
+    Else
+        HR_SetActiveTask($chosenTask)
+        HR_RegisterTaskPath($appPath, True)
+    EndIf
+
+EndFunc
+
+Func HR_ClearActiveTask()
+
+    $gTaskActive = False
+    $appPath = ""
+    $iniFile = $gExeDir & "\HandyRecorder.ini"
+
+EndFunc
+
+Func HR_SetActiveTask($taskPath)
+
+    $appPath = HR_NormalizePath($taskPath)
+    If $appPath = "" Then
+        HR_ClearActiveTask()
+        Return
+    EndIf
+    $gTaskActive = True
+    DirCreate($appPath)
+    $iniFile = $gExeDir & "\HandyRecorder.ini"
+
+EndFunc
+
+Func HR_NormalizePath($path)
+
+    $path = StringStripWS($path, 3)
+    If $path = "" Then Return ""
+
+    $path = StringReplace($path, "/", "\")
+
+    While StringLen($path) > 3 And StringRight($path, 1) = "\"
+        $path = StringTrimRight($path, 1)
+    WEnd
+
+    Return $path
+
+EndFunc
+
+Func HR_TaskNameFromPath($path)
+
+    $path = HR_NormalizePath($path)
+    If $path = "" Then Return "newtask"
+
+    Local $pos = StringInStr($path, "\", 0, -1)
+    If $pos < 1 Then Return _HR_CleanTaskName($path)
+
+    Local $name = StringMid($path, $pos + 1)
+    If $name = "" Then $name = "newtask"
+    Return _HR_CleanTaskName($name)
+
+EndFunc
+
+Func HR_SetTaskRegistryFile($file)
+
+    $file = HR_NormalizePath($file)
+    If $file = "" Then Return False
+    If Not FileExists($file) Then Return False
+    If StringRight(StringLower($file), 6) <> ".tasks" Then Return False
+
+    $gTaskRegistryFile = $file
+
+    Local $pos = StringInStr($file, "\", 0, -1)
+    Local $base = $file
+    If $pos > 0 Then $base = StringMid($file, $pos + 1)
+    If StringRight(StringLower($base), 6) = ".tasks" Then $base = StringTrimRight($base, 6)
+
+    $gFlowName = _HR_CleanTaskName($base)
+    If $gFlowName = "" Then $gFlowName = "handyrecorder"
+
+    Return True
+
+EndFunc
+Func HR_TaskRegistryPath()
+
+    If $gTaskRegistryFile = "" Then
+        If $gFlowName = "" Then $gFlowName = HR_TaskNameFromPath($gExeDir)
+        If $gFlowName = "" Then $gFlowName = "handyrecorder"
+        $gTaskRegistryFile = $gExeDir & "\" & $gFlowName & ".tasks"
+    EndIf
+    Return $gTaskRegistryFile
+
+EndFunc
+
+Func HR_TaskRegistryActivePath()
+
+    Local $names[1]
+    Local $paths[1]
+    Local $activePath = ""
+    Local $count = _HR_TaskRegistryRead($names, $paths, $activePath)
+
+    If $activePath <> "" Then Return $activePath
+    If $count > 0 Then Return $paths[1]
+
+    Return ""
+
+EndFunc
+
+Func HR_RegisterTaskPath($taskPath, $makeActive = True)
+
+    $taskPath = HR_NormalizePath($taskPath)
+    If $taskPath = "" Then Return False
+
+    DirCreate($taskPath)
+
+    Local $taskName = HR_TaskNameFromPath($taskPath)
+    If $taskName = "" Then Return False
+
+    Local $names[1]
+    Local $paths[1]
+    Local $activePath = ""
+    Local $count = _HR_TaskRegistryRead($names, $paths, $activePath)
+    Local $found = False
+
+    For $i = 1 To $count
+        If StringLower(HR_NormalizePath($paths[$i])) = StringLower($taskPath) Then
+            $names[$i] = $taskName
+            $paths[$i] = $taskPath
+            $found = True
+            ExitLoop
+        EndIf
+    Next
+
+    If Not $found Then
+        $count += 1
+        ReDim $names[$count + 1]
+        ReDim $paths[$count + 1]
+        $names[$count] = $taskName
+        $paths[$count] = $taskPath
+    EndIf
+
+    If $makeActive Then
+        $activePath = $taskPath
+    ElseIf $activePath = "" And $count > 0 Then
+        $activePath = $paths[1]
+    EndIf
+
+    Return _HR_TaskRegistryWrite($names, $paths, $activePath)
+
+EndFunc
+
+Func HR_TaskRegistryLoad(ByRef $names, ByRef $paths)
+
+    Local $activePath = ""
+    Return _HR_TaskRegistryRead($names, $paths, $activePath)
+
+EndFunc
+
+Func HR_TaskPathFromNewTaskChoice($choice)
+
+    $choice = HR_NormalizePath($choice)
+    If $choice = "" Then Return ""
+
+    If StringLower(StringRight($choice, 4)) = ".tsk" Then
+        $choice = StringTrimRight($choice, 4)
+    EndIf
+
+    Return $choice
+
+EndFunc
+
+Func _HR_TaskRegistryRead(ByRef $names, ByRef $paths, ByRef $activePath)
+
+    ReDim $names[1]
+    ReDim $paths[1]
+    $activePath = ""
+
+    Local $file = HR_TaskRegistryPath()
+    If Not FileExists($file) Then Return 0
+
+    Local $h = FileOpen($file, 0)
+    If $h = -1 Then Return 0
+
+    Local $count = 0
+    While 1
+        Local $line = FileReadLine($h)
+        If @error Then ExitLoop
+
+        $line = StringStripWS($line, 3)
+        If $line = "" Then ContinueLoop
+
+        If StringLeft($line, 10) = ";= active|" Then
+            $activePath = HR_NormalizePath(StringMid($line, 11))
+            ContinueLoop
+        EndIf
+
+        If StringLeft($line, 2) = ";=" Then ContinueLoop
+
+        Local $taskName = ""
+        Local $taskPath = ""
+        Local $sep = StringInStr($line, "|")
+
+        If $sep > 0 Then
+            $taskName = StringStripWS(StringLeft($line, $sep - 1), 3)
+            $taskPath = HR_NormalizePath(StringMid($line, $sep + 1))
+        Else
+            $taskPath = HR_NormalizePath($line)
+            $taskName = HR_TaskNameFromPath($taskPath)
+        EndIf
+
+        If $taskPath = "" Then ContinueLoop
+        If $taskName = "" Then $taskName = HR_TaskNameFromPath($taskPath)
+        If $taskName = "" Then ContinueLoop
+
+        $count += 1
+        ReDim $names[$count + 1]
+        ReDim $paths[$count + 1]
+        $names[$count] = _HR_CleanTaskName($taskName)
+        $paths[$count] = $taskPath
+    WEnd
+
+    FileClose($h)
+    Return $count
+
+EndFunc
+
+Func _HR_TaskRegistryWrite(ByRef $names, ByRef $paths, $activePath)
+
+    Local $file = HR_TaskRegistryPath()
+    Local $h = FileOpen($file, 2)
+    If $h = -1 Then Return False
+
+    FileWriteLine($h, ";= HandyRecorder task registry")
+    If $activePath <> "" Then FileWriteLine($h, ";= active|" & HR_NormalizePath($activePath))
+
+    For $i = 1 To UBound($names) - 1
+        Local $name = _HR_CleanTaskName($names[$i])
+        Local $path = HR_NormalizePath($paths[$i])
+        If $name = "" Or $path = "" Then ContinueLoop
+        FileWriteLine($h, $name & "|" & $path)
+    Next
+
+    FileClose($h)
+    Return True
+
+EndFunc
+
+Func _HR_MigrateOldTaskRegistry()
+
+    Local $newFile = HR_TaskRegistryPath()
+    If FileExists($newFile) Then Return
+
+    Local $oldFile = $gExeDir & "\HandyRecorder.tasks.ini"
+    If Not FileExists($oldFile) Then Return
+
+    Local $names[1]
+    Local $paths[1]
+    Local $count = 0
+    Local $activePath = HR_NormalizePath(IniRead($oldFile, "State", "active_path", ""))
+    Local $sections = IniReadSectionNames($oldFile)
+    If Not IsArray($sections) Then Return
+
+    For $i = 1 To $sections[0]
+        Local $sec = $sections[$i]
+        If StringLeft($sec, 5) <> "Task." Then ContinueLoop
+
+        Local $path = HR_NormalizePath(IniRead($oldFile, $sec, "path", ""))
+        If $path = "" Then ContinueLoop
+
+        Local $name = IniRead($oldFile, $sec, "name", "")
+        If $name = "" Then $name = HR_TaskNameFromPath($path)
+
+        $count += 1
+        ReDim $names[$count + 1]
+        ReDim $paths[$count + 1]
+        $names[$count] = $name
+        $paths[$count] = $path
+    Next
+
+    If $count > 0 Then _HR_TaskRegistryWrite($names, $paths, $activePath)
+
+EndFunc
+
+Func HR_UniqueChildPath($parentPath, $name)
+
+    $parentPath = HR_NormalizePath($parentPath)
+    If $parentPath = "" Then $parentPath = $gExeDir
+
+    $name = _HR_CleanTaskName($name)
+    If $name = "" Then $name = "newtask"
+
+    Local $base = $parentPath & "\" & $name
+    If Not FileExists($base) Then Return $base
+
+    For $i = 1 To 999
+        Local $candidate = $base & "_" & $i
+        If Not FileExists($candidate) Then Return $candidate
+    Next
+
+    Return $base & "_" & @YEAR & @MON & @MDAY & "_" & @HOUR & @MIN & @SEC
+
+EndFunc
+
+Func _HR_CommandLineTaskPath()
+
+    If Not IsArray($CmdLine) Then Return ""
+
+    For $i = 1 To $CmdLine[0]
+        Local $arg = $CmdLine[$i]
+        Local $lower = StringLower($arg)
+
+        If $lower = "/task" Or $lower = "-task" Then
+            If $i < $CmdLine[0] Then Return $CmdLine[$i + 1]
+        EndIf
+
+        If StringLeft($lower, 6) = "/task=" Then Return StringMid($arg, 7)
+        If StringLeft($lower, 6) = "-task=" Then Return StringMid($arg, 7)
+    Next
+
+    Return ""
+
+EndFunc
+
+Func _HR_LooksLikeTaskFolder($path)
+
+    $path = HR_NormalizePath($path)
+    If $path = "" Then Return False
+
+    Local $taskName = HR_TaskNameFromPath($path)
+    If FileExists($path & "\micracts") Then Return True
+    If FileExists($path & "\" & $taskName & ".tsk") Then Return True
+    Return False
+
+EndFunc
+
+Func _HR_CleanTaskName($name)
+
+    $name = StringStripWS($name, 3)
+    $name = StringRegExpReplace($name, '[\\/:*?"<>|]', "_")
+    $name = StringRegExpReplace($name, "\s+", "_")
+    Return $name
+
+EndFunc
+
+Func InitConfig()
+
+    If $appPath = "" Then HR_InitRuntimePaths()
+    $iniFile = $gExeDir & "\HandyRecorder.ini"
+
+    If Not FileExists($iniFile) Then
+        CreateDefaultIni()
+    Else
+        EnsureDefaultIniValues()
+    EndIf
+
+EndFunc
+
+Func HR_NormalizeRunMode($mode, $legacyFileAuto = "")
+
+    $mode = StringUpper(StringStripWS($mode, 3))
+    Switch $mode
+        Case "M", "MF", "A"
+            Return $mode
+    EndSwitch
+
+    If StringStripWS($legacyFileAuto, 3) = "1" Then Return "A"
+    Return "M"
+
+EndFunc
+
+Func HR_NextRunMode($mode)
+
+    $mode = HR_NormalizeRunMode($mode)
+    Switch $mode
+        Case "M"
+            Return "MF"
+        Case "MF"
+            Return "A"
+    EndSwitch
+    Return "M"
+
+EndFunc
+
+Func HR_CurrentRunMode()
+
+    If IsDeclared("gRunMode") Then Return HR_NormalizeRunMode(Eval("gRunMode"))
+    Return HR_NormalizeRunMode(CfgRead("Settings", "run_mode", ""), CfgRead("Settings", "file_auto", "0"))
+
+EndFunc
+Func CreateDefaultIni()
+
+    IniWrite($iniFile, "UI", "x", "200")
+    IniWrite($iniFile, "UI", "y", "200")
+    IniWrite($iniFile, "UI", "blink_enabled", "1")
+    IniWrite($iniFile, "UI", "blink_pause_ms", "250")
+    IniWrite($iniFile, "UI", "blink_button_ms", "700")
+
+    IniWrite($iniFile, "Settings", "action_delay", "0.5")
+    IniWrite($iniFile, "Settings", "repeat_delay", "3")
+    IniWrite($iniFile, "Settings", "auto_repeat", "0")
+    IniWrite($iniFile, "Settings", "file_auto", "0")
+    IniWrite($iniFile, "Settings", "run_mode", "M")
+    IniWrite($iniFile, "Settings", "offset_reanchor", "0")
+    IniWrite($iniFile, "Settings", "offset_reanchor_date", "")
+
+    IniWrite($iniFile, "Hotkeys", "playback_pause", "{F9}")
+    IniWrite($iniFile, "Hotkeys", "manual_focus_resume", "^{F9}")
+    IniWrite($iniFile, "Hotkeys", "record_off", "!{F9}")
+    IniWrite($iniFile, "Hotkeys", "emergency_stop", "+{F9}")
+    IniWrite($iniFile, "Hotkeys", "start_stop", "")
+    IniWrite($iniFile, "Hotkeys", "run_active", "{F6}")
+    IniWrite($iniFile, "Hotkeys", "run_active_next", "+{F6}")
+    IniWrite($iniFile, "Hotkeys", "active_line_prev", "{F5}")
+    IniWrite($iniFile, "Hotkeys", "active_line_next", "{F7}")
+    IniWrite($iniFile, "Hotkeys", "file_prev", "!{F5}")
+    IniWrite($iniFile, "Hotkeys", "file_next", "!{F7}")
+    IniWrite($iniFile, "Hotkeys", "run_current_file", "!{F6}")
+    IniWrite($iniFile, "Hotkeys", "mode_cycle", "^{F6}")
+    IniWrite($iniFile, "Hotkeys", "run_file_1", "^!1")
+    IniWrite($iniFile, "Hotkeys", "run_file_2", "^!2")
+    IniWrite($iniFile, "Hotkeys", "run_file_3", "^!3")
+    IniWrite($iniFile, "Hotkeys", "run_file_4", "^!4")
+    IniWrite($iniFile, "Hotkeys", "run_file_5", "^!5")
+    IniWrite($iniFile, "Hotkeys", "run_file_6", "^!6")
+    IniWrite($iniFile, "Hotkeys", "run_file_7", "^!7")
+    IniWrite($iniFile, "Hotkeys", "run_file_8", "^!8")
+    IniWrite($iniFile, "Hotkeys", "run_file_9", "^!9")
+    IniWrite($iniFile, "Hotkeys", "run_file_0", "^!0")
+    IniWrite($iniFile, "Hotkeys", "string_toggle", "^+t")
+    IniWrite($iniFile, "Hotkeys", "offset_toggle", "{F8}")
+    IniWrite($iniFile, "Hotkeys", "tooltip_toggle", "^+y")
+    IniWrite($iniFile, "Hotkeys", "mouse_move", "+{F8}")
+
+    IniWrite($iniFile, "Merge", "enabled", "1")
+    IniWrite($iniFile, "Merge", "mouse_px", "6")
+
+    IniWrite($iniFile, "Record", "drag_px", "5")
+    IniWrite($iniFile, "Record", "tooltip_enabled", "1")
+    IniWrite($iniFile, "Record", "tooltip_color_enabled", "1")
+    IniWrite($iniFile, "Record", "tooltip_interval_ms", "100")
+    IniWrite($iniFile, "Record", "mask_button_string", "1")
+    IniWrite($iniFile, "Record", "button_string_gap_sec", "0.7")
+    IniWrite($iniFile, "Record", "mouse_down_hold_sec", "1")
+
+    ; Auto comment / screenshot crop
+    IniWrite($iniFile, "AutoComment", "enabled", "1")
+    IniWrite($iniFile, "AutoComment", "crop_w", "80")
+    IniWrite($iniFile, "AutoComment", "crop_h", "40")
+
+    IniWrite($iniFile, "Review", "zoom_ratio", "2")
+
+    IniWrite($iniFile, "Info", "version", $HR_VERSION)
+    IniWrite($iniFile, "Info", "note", "Auto-created default HandyRecorder config")
+    IniWrite($iniFile, "Info", "help", _DefaultHelpText())
+
+EndFunc
+
+Func EnsureDefaultIniValues()
+
+    _IniEnsure("UI", "x", "200")
+    _IniEnsure("UI", "y", "200")
+    _IniEnsure("UI", "blink_enabled", "1")
+    _IniEnsure("UI", "blink_pause_ms", "250")
+    _IniEnsure("UI", "blink_button_ms", "700")
+
+    _IniEnsure("Settings", "action_delay", "0.5")
+    _IniEnsure("Settings", "repeat_delay", "3")
+    _IniEnsure("Settings", "auto_repeat", "0")
+    _IniEnsure("Settings", "file_auto", "0")
+    If IniRead($iniFile, "Settings", "run_mode", "__MISSING__") = "__MISSING__" Then IniWrite($iniFile, "Settings", "run_mode", HR_NormalizeRunMode("", IniRead($iniFile, "Settings", "file_auto", "0")))
+    _IniEnsure("Settings", "offset_reanchor", "0")
+    _IniEnsure("Settings", "offset_reanchor_date", "")
+
+    _IniEnsure("Hotkeys", "playback_pause", "{F9}")
+    _IniEnsure("Hotkeys", "manual_focus_resume", "^{F9}")
+    _IniEnsure("Hotkeys", "record_off", "!{F9}")
+    _IniEnsure("Hotkeys", "emergency_stop", "+{F9}")
+    _IniEnsure("Hotkeys", "start_stop", "")
+    _IniEnsure("Hotkeys", "run_active", "{F6}")
+    _IniEnsure("Hotkeys", "run_active_next", "+{F6}")
+    _IniEnsure("Hotkeys", "active_line_prev", "{F5}")
+    _IniEnsure("Hotkeys", "active_line_next", "{F7}")
+    _IniEnsure("Hotkeys", "file_prev", "!{F5}")
+    _IniEnsure("Hotkeys", "file_next", "!{F7}")
+    _IniEnsure("Hotkeys", "run_current_file", "!{F6}")
+    _IniEnsure("Hotkeys", "mode_cycle", "^{F6}")
+    _IniEnsure("Hotkeys", "run_file_1", "^!1")
+    _IniEnsure("Hotkeys", "run_file_2", "^!2")
+    _IniEnsure("Hotkeys", "run_file_3", "^!3")
+    _IniEnsure("Hotkeys", "run_file_4", "^!4")
+    _IniEnsure("Hotkeys", "run_file_5", "^!5")
+    _IniEnsure("Hotkeys", "run_file_6", "^!6")
+    _IniEnsure("Hotkeys", "run_file_7", "^!7")
+    _IniEnsure("Hotkeys", "run_file_8", "^!8")
+    _IniEnsure("Hotkeys", "run_file_9", "^!9")
+    _IniEnsure("Hotkeys", "run_file_0", "^!0")
+    _IniEnsure("Hotkeys", "string_toggle", "^+t")
+    _IniEnsure("Hotkeys", "offset_toggle", "{F8}")
+    _IniEnsure("Hotkeys", "tooltip_toggle", "^+y")
+    _IniEnsure("Hotkeys", "mouse_move", "+{F8}")
+    _IniMigrateDefault("Hotkeys", "playback_pause", "{F8}", "{F9}")
+    _IniMigrateDefault("Hotkeys", "emergency_stop", "{F9}", "+{F9}")
+    _IniMigrateDefault("Hotkeys", "emergency_stop", "{F8}", "+{F9}")
+    _IniMigrateDefault("Hotkeys", "start_stop", "{F9}", "")
+    _IniMigrateDefault("Hotkeys", "run_active", "^+r", "{F6}")
+    _IniMigrateDefault("Hotkeys", "active_line_prev", "^+{UP}", "{F5}")
+    _IniMigrateDefault("Hotkeys", "active_line_prev", "^+i", "{F5}")
+    _IniMigrateDefault("Hotkeys", "active_line_next", "^+{DOWN}", "{F7}")
+    _IniMigrateDefault("Hotkeys", "active_line_next", "^+m", "{F7}")
+    _IniMigrateDefault("Hotkeys", "offset_toggle", "^+o", "{F8}")
+    _IniMigrateDefault("Hotkeys", "mouse_move", "{F8}", "+{F8}")
+    _IniMigrateDefault("Hotkeys", "file_prev", "^!{LEFT}", "!{F5}")
+    _IniMigrateDefault("Hotkeys", "file_prev", "^!j", "!{F5}")
+    _IniMigrateDefault("Hotkeys", "file_next", "^!{RIGHT}", "!{F7}")
+    _IniMigrateDefault("Hotkeys", "file_next", "^!l", "!{F7}")
+    _IniMigrateDefault("Hotkeys", "run_current_file", "^!r", "!{F6}")
+    _IniMigrateDefault("Settings", "run_mode", "", HR_NormalizeRunMode("", IniRead($iniFile, "Settings", "file_auto", "0")))
+    _IniMigrateDefault("Hotkeys", "mouse_move", "{F7}", "{F8}")
+    _IniMigrateDefault("Hotkeys", "string_toggle", "^+s", "^+t")
+    _IniMigrateDefault("Hotkeys", "tooltip_toggle", "^+t", "^+y")
+    _IniMigrateDefault("Hotkeys", "move_line_up", "^!{UP}", "")
+    _IniMigrateDefault("Hotkeys", "move_line_down", "^!{DOWN}", "")
+
+    _IniEnsure("Merge", "enabled", "1")
+    _IniEnsure("Merge", "mouse_px", "6")
+
+    _IniEnsure("Record", "drag_px", "5")
+    _IniEnsure("Record", "tooltip_enabled", "1")
+    _IniEnsure("Record", "tooltip_color_enabled", "1")
+    _IniEnsure("Record", "tooltip_interval_ms", "100")
+    _IniEnsure("Record", "mask_button_string", "1")
+    _IniEnsure("Record", "button_string_gap_sec", "0.7")
+    _IniEnsure("Record", "mouse_down_hold_sec", "1")
+
+    _IniEnsure("AutoComment", "enabled", "1")
+    _IniEnsure("AutoComment", "crop_w", "80")
+    _IniEnsure("AutoComment", "crop_h", "40")
+
+    _IniEnsure("Review", "zoom_ratio", "2")
+
+    _IniEnsure("Info", "version", $HR_VERSION)
+    _IniEnsure("Info", "help", _DefaultHelpText())
+    _IniMigrateDefault("Info", "version", "0.3", "1.02")
+    _IniMigrateDefault("Info", "version", "1.0", "1.02")
+    _IniMigrateDefault("Info", "version", "1.01", "1.02")
+    _IniMigrateDefault("Info", "version", "1.02", "1.2")
+    _IniMigrateDefault("Info", "version", "1.2", "1.21")
+    _IniMigrateDefault("Info", "version", "1.21", "1.22")
+    _IniMigrateDefault("Info", "version", "1.22", "1.23")
+    _IniMigrateDefault("Info", "version", "1.23", "1.24")
+    _IniMigrateDefault("Info", "version", "1.24", "1.30")
+    _IniMigrateDefault("Info", "version", "1.30", "1.31")
+    _IniMigrateDefault("Info", "version", "1.31", "1.4")
+    _IniMigrateDefault("Info", "version", "1.4", "1.41")
+    _IniMigrateDefault("Info", "version", "1.41", "1.42")
+    _IniMigrateDefault("Info", "version", "1.42", "1.43")
+    _IniMigrateDefault("Info", "version", "1.43", "1.44")
+    _IniMigrateDefault("Info", "version", "1.44", "1.50")
+    _IniMigrateDefault("Info", "version", "1.50", "1.51")
+    _IniMigrateDefault("Info", "version", "1.51", "1.52")
+    _IniMigrateDefault("Info", "version", "1.52", "1.53")
+    _IniMigrateDefault("Info", "version", "1.53", "1.54")
+    _IniMigrateDefault("Info", "version", "1.54", "1.55")
+    _IniMigrateDefault("Info", "version", "1.55", $HR_VERSION)
+    _IniMigrateDefault("AutoComment", "crop_w", "20", "80")
+
+EndFunc
+
+Func _IniEnsure($section, $key, $default)
+
+    If IniRead($iniFile, $section, $key, "__MISSING__") = "__MISSING__" Then
+        IniWrite($iniFile, $section, $key, $default)
+    EndIf
+
+EndFunc
+
+Func _IniMigrateDefault($section, $key, $oldDefault, $newDefault)
+
+    If IniRead($iniFile, $section, $key, "") = $oldDefault Then
+        IniWrite($iniFile, $section, $key, $newDefault)
+    EndIf
+
+EndFunc
+
+Func CfgRead($section, $key, $default)
+
+    Return IniRead($iniFile, $section, $key, $default)
+
+EndFunc
+
+Func CfgReadMultiline($section, $key, $default)
+
+    Return StringReplace(IniRead($iniFile, $section, $key, $default), "\n", @CRLF)
+
+EndFunc
+
+Func _DefaultHelpText()
+
+    Return "Action\n" & _
+        "F5/F7, Alt+F5/F7 Previous/next command or file\n" & _
+        "F6, Shift+F6, Alt+F6 Run active, run+next, run file\n" & _
+        "Ctrl+F6 Cycle M/MF/A mode\n" & _
+        "F8 Offset pin on/off, Shift+F8 move\n" & _
+        "F9/Ctrl+F9, Shift+F9 Pause/resume, manual focus resume, stop/off\n" & _
+        "Ctrl+Alt+1..9/0 Run list item 1..9/10\n" & _
+        "\n" & _
+        "Record mode\n" & _
+        "Ctrl+Shift+T/Y String, tooltip\n" & _
+        "\n" & _
+        "Edit files\n" & _
+        "Add Register/create task, L Reload, N New, S Save, D Duplicate, E TSK edit; ^/v/X/B move/delete/block"
+
+EndFunc
+
+Func SaveAppConfig()
+
+    Local $pos = WinGetPos($gui)
+
+    If IsArray($pos) Then
+        IniWrite($iniFile, "UI", "x", $pos[0])
+        IniWrite($iniFile, "UI", "y", $pos[1])
+    EndIf
+
+    IniWrite($iniFile, "Settings", "action_delay", GUICtrlRead($inputAction))
+    IniWrite($iniFile, "Settings", "repeat_delay", GUICtrlRead($inputRepeat))
+
+    If GUICtrlRead($chkRepeat) = $GUI_CHECKED Then
+        IniWrite($iniFile, "Settings", "auto_repeat", "1")
+    Else
+        IniWrite($iniFile, "Settings", "auto_repeat", "0")
+    EndIf
+
+    If GUICtrlRead($chkFileAuto) = $GUI_CHECKED Then
+        IniWrite($iniFile, "Settings", "file_auto", "1")
+    Else
+        IniWrite($iniFile, "Settings", "file_auto", "0")
+    EndIf
+    IniWrite($iniFile, "Settings", "run_mode", HR_CurrentRunMode())
+
+    If GUICtrlRead($chkReanchor) = $GUI_CHECKED Then
+        IniWrite($iniFile, "Settings", "offset_reanchor", "1")
+    Else
+        IniWrite($iniFile, "Settings", "offset_reanchor", "0")
+    EndIf
+
+EndFunc
+
+Func _CreateDefaultRecord()
+
+    If Not $gTaskActive Then Return
+    EnsureActionWorkspace()
+
+    Local $startup = GetStartupRecordName()
+    If $startup <> "" Then Return
+
+    $currentFile = RecordPath("record1")
+    _AppendFlowName("record1")
+
+    Local $h = FileOpen($currentFile, 2)
+    If $h = -1 Then Return
+
+    FileWriteLine($h, ";= Resolution " & @DesktopWidth & "x" & @DesktopHeight)
+    FileWriteLine($h, ';=P_P1,"",1,,rem_human_pause')
+
+    FileClose($h)
+
+EndFunc
+
+
+

@@ -1,0 +1,22 @@
+0000000000000000000000000000000000000000 f4f95d98adc1e1a84288b4c5aa1d4fa441fdcb9f phyzjqkl <phyzjqk@hotmail.com> 1779828886 -0400
+f4f95d98adc1e1a84288b4c5aa1d4fa441fdcb9f 3a827095d2335135b6b2d21ac0cafbae645f6f5e phyzjqkl <phyzjqk@hotmail.com> 1779828990 -0400	commit: Update HandyRecorder source
+3a827095d2335135b6b2d21ac0cafbae645f6f5e 40bb4d7cd687762b3942ec397782fc7d9f17ecdb phyzjqkl <phyzjqk@hotmail.com> 1779923189 -0400	commit: Add playback pause insertion and mouse move recording
+40bb4d7cd687762b3942ec397782fc7d9f17ecdb 73bcabe98557d78696ea17583110c5f5c83c3566 phyzjqkl <phyzjqk@hotmail.com> 1779924196 -0400	commit: Append revision tests to checklist
+73bcabe98557d78696ea17583110c5f5c83c3566 dea8e5d281cbd9abc1d109625c5f9949cffb1a5a phyzjqkl <phyzjqk@hotmail.com> 1780058061 -0400	commit: Add AutoComment review crop window
+dea8e5d281cbd9abc1d109625c5f9949cffb1a5a e5e0e5b2884a9842c6f9f27c851881b47808734c phyzjqkl <phyzjqk@hotmail.com> 1780255071 -0400	commit: Fix Review state initialization
+e5e0e5b2884a9842c6f9f27c851881b47808734c 3c147daec94a17cc1d4e1ebbfeea85265823c674 phyzjqkl <phyzjqk@hotmail.com> 1780255771 -0400	commit: Fix Review preview and crop labels
+3c147daec94a17cc1d4e1ebbfeea85265823c674 6b9360b9e86e435745fd6a9d9cfc9cbdef6f7111 phyzjqkl <phyzjqk@hotmail.com> 1780257174 -0400	commit: Attach Review window and add rem editor
+6b9360b9e86e435745fd6a9d9cfc9cbdef6f7111 b2b8207aa14c024c835d5eb40ff5366a68aa4978 phyzjqkl <phyzjqk@hotmail.com> 1780257848 -0400	commit: Fix Review rem editor field handling
+b2b8207aa14c024c835d5eb40ff5366a68aa4978 beb1f1985e53bc823ae4365d21e48652033530c5 phyzjqkl <phyzjqk@hotmail.com> 1780258298 -0400	commit: Store Review crop offsets from mouse point
+beb1f1985e53bc823ae4365d21e48652033530c5 8f2a561d1a6d0ab924f6133d3fcaea23ada3e313 phyzjqkl <phyzjqk@hotmail.com> 1780258579 -0400	commit: Clamp Review crop to image bounds
+8f2a561d1a6d0ab924f6133d3fcaea23ada3e313 db50614d52984d311deecee05c3d81f09921b7d5 phyzjqkl <phyzjqk@hotmail.com> 1780601844 -0400	commit: Refine UI hotkeys and review rem handling
+db50614d52984d311deecee05c3d81f09921b7d5 6365576c45ebde7f1bb542b453aae96926500038 phyzjqkl <phyzjqk@hotmail.com> 1780623766 -0400	commit: Prepare HandyRecorder 1.0 source
+6365576c45ebde7f1bb542b453aae96926500038 39a9e21b7354602083ff9138bb7d2a8097574d63 phyzjqkl <phyzjqk@hotmail.com> 1780625192 -0400	commit: Add mouse long press support
+39a9e21b7354602083ff9138bb7d2a8097574d63 f6e0267c5af3380ca227860cc7ef270b1964cc2f phyzjqkl <phyzjqk@hotmail.com> 1780679653 -0400	commit: Fix command edit save sync
+f6e0267c5af3380ca227860cc7ef270b1964cc2f 179eed7492ce861accb72053b6c87fe2637a4c48 phyzjqkl <phyzjqk@hotmail.com> 1780712570 -0400	commit: Implement HandyRecorder 1.21 flow extensions
+179eed7492ce861accb72053b6c87fe2637a4c48 f6403ebd1827cceee3b235a4e91a5f4ad9148f49 phyzjqkl <phyzjqk@hotmail.com> 1780712874 -0400	commit: Use flw action table extension
+f6403ebd1827cceee3b235a4e91a5f4ad9148f49 ff2d5f9b8c9586304201f9a6cbacd991a896a446 phyzjqkl <phyzjqk@hotmail.com> 1780713283 -0400	commit: Use implicit rec entries in flw tables
+ff2d5f9b8c9586304201f9a6cbacd991a896a446 42cc68baadd0a5b9b4c160564cd60c76eace1a67 phyzjqkl <phyzjqk@hotmail.com> 1780749497 -0400	commit: Use tsk task table extension
+42cc68baadd0a5b9b4c160564cd60c76eace1a67 4b242029efe5f4b147d94a0f1559253aa37a830c phyzjqkl <phyzjqk@hotmail.com> 1780763065 -0400	commit: Add blinking UI state feedback
+4b242029efe5f4b147d94a0f1559253aa37a830c fb89acae01d4b7def1ead4c8eb203c89260b725b phyzjqkl <phyzjqk@hotmail.com> 1780958607 -0400	commit: Release HandyRecorder 1.43 source
+fb89acae01d4b7def1ead4c8eb203c89260b725b fcebcc7250070d284dc82b9d531880499767ecfd phyzjqkl <phyzjqk@hotmail.com> 1781620415 -0400	commit: Source HandyRecorder 1.55

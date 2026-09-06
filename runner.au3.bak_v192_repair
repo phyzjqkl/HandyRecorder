@@ -1,0 +1,1883 @@
+#include <File.au3>
+#include <GUIConstantsEx.au3>
+#include <WindowsConstants.au3>
+
+Global $running
+Global $recording
+
+Global $btnStart
+Global $status
+
+Global $currentFile
+
+Global $chkRepeat
+Global $chkFileAuto
+Global $chkSkipRes
+Global $inputRepeat
+Global $inputAction
+
+Global $cmbCmd
+Global $cmbFiles
+Global $chkReanchor
+Global $iniFile
+Global $gui
+
+Global $runLoaded = False
+Global $runIndex = 1
+Global $runLines[1]
+Global $gCompiledLines
+Global $gVarArray
+Global $runPaused = False
+Global $runPauseRequested = False
+Global $runFocusPauseRequested = False
+Global $runPauseContinueRequested = False
+Global $runPausedIndex = 0
+Global $manualFocusWait = False
+Global $manualFocusWasDown = False
+Global $gPatchSavedPrompt = False
+Global $taskRunMode = False
+Global $taskRunList[1]
+Global $taskRunPos = 0
+Global $runSelectNextAfterFinish = False
+Global $gRunMode
+Global $gMFStepReady = False
+
+Global $mspBaseSet = False
+Global $mspBaseX = 0
+Global $mspBaseY = 0
+Global $mspBaseFromMSM = False
+Global $mspReanchorActive = False
+Global $mspSkipNextBase = False
+
+Global $dragDownActive = False
+Global $dragDownButton = "L"
+Global $dragStartX = 0
+Global $dragStartY = 0
+
+Func ToggleRun()
+
+    If $running Or $runPaused Then
+        StopRun()
+    ElseIf HR_CurrentRunMode() = "MF" Then
+        StartManualFlowStep()
+    Else
+        StartRun()
+    EndIf
+
+EndFunc
+
+Func StartRun($manualNext = False)
+
+    If $runPaused Then Return
+
+    $taskRunMode = False
+    ReDim $taskRunList[1]
+    $taskRunPos = 0
+    $runSelectNextAfterFinish = $manualNext
+
+    $gMFStepReady = False
+
+    If HR_CurrentRunMode() = "A" Then
+        If Not TaskBuildRunList($taskRunList) Then Return
+        $taskRunMode = True
+        $taskRunPos = 1
+        If Not _SelectTaskRunEntry($taskRunList[$taskRunPos]) Then Return
+    Else
+        Local $selectedRecord = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+        If $selectedRecord <> "" Then
+            If Not SelectRecordByName($selectedRecord) Then Return
+        ElseIf $currentFile = "" Or Not FileExists($currentFile) Then
+            Return
+        EndIf
+    EndIf
+
+    $running = True
+
+    GUICtrlSetData($btnStart, "Stop")
+    GUICtrlSetData($status, "Running")
+
+    $runLoaded = False
+    $runIndex = 1
+    $runPaused = False
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = False
+    $runPausedIndex = 0
+    $manualFocusWait = False
+    $manualFocusWasDown = False
+    $gPatchSavedPrompt = False
+
+    $mspBaseSet = False
+    $mspBaseX = 0
+    $mspBaseY = 0
+    $mspBaseFromMSM = False
+    $mspReanchorActive = False
+    $mspSkipNextBase = False
+    $dragDownActive = False
+    $dragDownButton = "L"
+    $dragStartX = 0
+    $dragStartY = 0
+
+EndFunc
+
+Func StopRun()
+
+    $running = False
+    $runPaused = False
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = False
+    $runPausedIndex = 0
+    $manualFocusWait = False
+    $manualFocusWasDown = False
+    $gPatchSavedPrompt = False
+    $taskRunMode = False
+    ReDim $taskRunList[1]
+    $taskRunPos = 0
+    $runSelectNextAfterFinish = False
+    $mspBaseSet = False
+    $mspBaseFromMSM = False
+    $mspReanchorActive = False
+    $mspSkipNextBase = False
+
+    GUICtrlSetData($btnStart, "Stop")
+
+    If $recording Then
+        GUICtrlSetData($status, "Recording")
+    Else
+        GUICtrlSetData($status, "Idle")
+    EndIf
+
+EndFunc
+
+Func TogglePlaybackPause()
+
+    If $recording Then
+        TogglePauseRecord()
+        Return
+    EndIf
+
+    If $runPaused Then
+        ContinuePausedRun()
+        Return
+    EndIf
+
+    If $running Then
+        PauseRunningFlow()
+    EndIf
+
+EndFunc
+
+Func PauseRunningFlow()
+
+    If Not $running Then Return
+
+    $running = False
+    $runPaused = True
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = False
+    $manualFocusWait = False
+    $manualFocusWasDown = False
+    $gPatchSavedPrompt = False
+
+    If $runPausedIndex < 1 Then $runPausedIndex = $runIndex - 1
+    If $runPausedIndex < 1 Then $runPausedIndex = 1
+
+    GUICtrlSetData($btnStart, "Start")
+    GUICtrlSetData($status, "Pause")
+
+Func ManualFocusResume()
+
+    If $recording Then
+        RecordManualFocusResume()
+        Return
+    EndIf
+
+    If Not $runPaused Then Return
+    If Not _PausedAtIndefinitePauseCommand() Then Return
+
+    _MarkPausedLineManualFocus()
+    $manualFocusWait = True
+    $manualFocusWasDown = (_IsPressed("01") Or _IsPressed("11"))
+    GUICtrlSetData($status, "Ctrl+Click target")
+
+EndFunc
+    GUICtrlSetData($status, "Click target")
+Func RunActiveCommand()
+
+    If $running Then Return
+
+    If $recording Then
+        DeleteSelectedCommandForRecord()
+        Return
+    EndIf
+
+    If $runPaused Then
+        ContinuePausedRun()
+        Return
+    EndIf
+
+    If HR_CurrentRunMode() = "MF" Then
+        StartManualFlowStep()
+        Return
+    EndIf
+
+    If Not _ValidateCurrentFileResolution() Then Return
+
+    Local $line = GUICtrlRead($cmbCmd)
+    If StringStripWS($line, 3) = "" Then Return
+
+    Local $compiled = VarCompileLine($line, $gLoadedRecordName)
+    If $gVarCompileError <> "" Then
+        GUICtrlSetData($status, $gVarCompileError)
+        Return
+    EndIf
+    ExecuteCompiledText($compiled, $line)
+
+Func RunActiveCommandAndNext()
+
+    If $running Then Return
+
+    If $recording Then
+        Return
+    EndIf
+
+    If $runPaused Then
+        ContinuePausedRun()
+        Return
+    EndIf
+
+    If HR_CurrentRunMode() = "MF" Then
+        StartManualFlowStep()
+        Return
+    EndIf
+
+    RunActiveCommand()
+    SelectNextCommand()
+
+EndFunc
+
+    RunActiveCommand()
+    SelectNextCommand()
+
+EndFunc
+
+Func StartManualFlowStep()
+
+    If $running Or $runPaused Then Return
+    If Not _ValidateCurrentFileResolution() Then Return
+
+    Local $selectedRecord = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    If $selectedRecord <> "" Then
+        If Not SelectRecordByName($selectedRecord) Then Return
+    ElseIf $currentFile = "" Or Not FileExists($currentFile) Then
+        Return
+    EndIf
+
+    $taskRunMode = False
+    ReDim $taskRunList[1]
+    $taskRunPos = 0
+    $runSelectNextAfterFinish = False
+    $runLoaded = False
+    $runIndex = _FindActiveIndex()
+    If $runIndex < 1 Then $runIndex = 1
+    $running = True
+    $runPaused = False
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = False
+    $runPausedIndex = 0
+    $manualFocusWait = False
+    $manualFocusWasDown = False
+    $gPatchSavedPrompt = False
+    $gMFStepReady = False
+    $mspBaseSet = False
+    $mspBaseFromMSM = False
+    $mspReanchorActive = False
+    $mspSkipNextBase = False
+    $dragDownActive = False
+    GUICtrlSetData($btnStart, "Stop")
+    GUICtrlSetData($status, "Running")
+
+EndFunc
+
+Func _FindNextRunnableDisplayIndex($startIndex)
+
+    If $startIndex < 1 Then $startIndex = 1
+    For $i = $startIndex To UBound($gCurrLines) - 1
+        Local $line = StringStripWS($gCurrLines[$i], 3)
+        If $line = "" Then ContinueLoop
+        If StringLeft($line, 2) = ";=" Then ContinueLoop
+        If Not VarCommandLineEnabled($gLoadedRecordName, $i) Then ContinueLoop
+        Return $i
+    Next
+    Return 0
+
+EndFunc
+
+Func _StopManualFlowAfterStep()
+
+    $running = False
+    $runLoaded = False
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = False
+    $runPausedIndex = 0
+    $manualFocusWait = False
+    $manualFocusWasDown = False
+    $gPatchSavedPrompt = False
+    $gMFStepReady = True
+
+    Local $nextIndex = _FindNextRunnableDisplayIndex($runIndex)
+    If $nextIndex > 0 Then
+        $gActiveIndex = $nextIndex
+        $gLastVisibleText = $gCurrLines[$gActiveIndex]
+        _RenderCommands($gActiveIndex)
+        GUICtrlSetData($cmbCmd, $gCurrLines[$gActiveIndex])
+    ElseIf _SelectNextTaskRunRecord() Then
+        $nextIndex = _FindNextRunnableDisplayIndex(1)
+        If $nextIndex > 0 Then
+            $gActiveIndex = $nextIndex
+            $gLastVisibleText = $gCurrLines[$gActiveIndex]
+            _RenderCommands($gActiveIndex)
+            GUICtrlSetData($cmbCmd, $gCurrLines[$gActiveIndex])
+        EndIf
+    EndIf
+
+    GUICtrlSetData($btnStart, "Start")
+    GUICtrlSetData($status, "Idle")
+
+EndFunc
+Func _ValidateCurrentFileResolution()
+
+    If _SkipResolutionCheck() Then Return True
+    If Not FileExists($currentFile) Then Return True
+
+    Local $line = StringStripWS(FileReadLine($currentFile, 1), 3)
+    If StringLeft($line, 14) <> ";= Resolution " Then Return True
+
+    Local $recorded = StringStripWS(StringTrimLeft($line, 14), 3)
+    Local $current = @DesktopWidth & "x" & @DesktopHeight
+
+    If $recorded = "" Or $recorded = $current Then Return True
+
+    _ShowResolutionMismatch($recorded, $current)
+    Return False
+
+EndFunc
+
+Func ContinuePausedRun()
+
+    If Not $runPaused Then Return
+
+    $running = True
+    $runPaused = False
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = True
+    $runPausedIndex = 0
+    $manualFocusWait = False
+Func ManualFocusTick()
+
+    If Not $manualFocusWait Then Return
+
+    If Not $runPaused Then
+        $manualFocusWait = False
+        $manualFocusWasDown = False
+        Return
+    EndIf
+
+    Local $leftDown = _IsPressed("01")
+    Local $ctrlDown = _IsPressed("11")
+
+    If $manualFocusWasDown Then
+        If Not $leftDown And Not $ctrlDown Then $manualFocusWasDown = False
+        Return
+    EndIf
+
+    If Not $leftDown Or Not $ctrlDown Then Return
+    If _MouseInsideRecorderUI() Then Return
+
+    While _IsPressed("01")
+        Sleep(5)
+        Local $msg = GUIGetMsg()
+        Switch $msg
+            Case $GUI_EVENT_CLOSE
+                Exit
+            Case $btnStart
+                StopRun()
+                Return
+        EndSwitch
+    WEnd
+
+    ContinuePausedRun()
+
+EndFunc
+            Case $btnStart
+                StopRun()
+                Return
+        EndSwitch
+    WEnd
+
+    ContinuePausedRun()
+
+EndFunc
+
+Func RunNextCommand()
+
+    If Not $running Then Return
+
+    If Not $runLoaded Then
+
+        _FileReadToArray($currentFile, $runLines)
+
+        If @error Then
+            StopRun()
+            Return
+        EndIf
+
+        ; Keep Commands synchronized without re-opening the file during playback.
+        LoadCommandsFromArray($runLines)
+        If $gVarCompileError <> "" Then
+            StopRun()
+            GUICtrlSetData($status, $gVarCompileError)
+            Return
+        EndIf
+
+        If Not _ValidateRunResolution() Then Return
+
+        $runLoaded = True
+        $runIndex = 1
+
+    EndIf
+
+    If $runIndex > $runLines[0] Then
+
+        If _AdvanceRunTarget() Then Return
+
+        Local $advanceNext = $runSelectNextAfterFinish
+        StopRun()
+        If $advanceNext Then SelectNextRecordFile()
+        Return
+
+    EndIf
+
+    Local $line = StringStripWS($runLines[$runIndex], 3)
+
+    If Not VarCommandLineEnabled($gLoadedRecordName, $runIndex) Then
+        $runIndex += 1
+        Return
+    EndIf
+
+    If $line = "" Then
+        $runIndex += 1
+        Return
+    EndIf
+
+    If StringLeft($line, 2) = ";=" Then
+        If _IsOffsetStartComment($line) And _OffsetReanchorEnabled() Then
+            $mspBaseSet = False
+            $mspBaseFromMSM = False
+            If Not _WaitForOffsetReanchor() Then Return
+        ElseIf _IsOffsetStartComment($line) Then
+            $mspBaseSet = False
+            $mspBaseFromMSM = False
+        EndIf
+        $runIndex += 1
+        Return
+    EndIf
+
+    $runPausedIndex = $runIndex
+    _RenderCommands($runIndex)
+    GUICtrlSetData($cmbCmd, $line)
+    BlinkActiveRunCommand()
+
+    ExecuteCompiledCommand($line, $runIndex)
+
+    $runIndex += 1
+
+    If $runFocusPauseRequested Then
+        $runFocusPauseRequested = False
+        $runPauseRequested = False
+        $running = False
+        $runPaused = True
+        $manualFocusWait = True
+        $manualFocusWasDown = _IsPressed("01")
+        GUICtrlSetData($btnStart, "Stop")
+        GUICtrlSetData($status, FocusPauseStatusText())
+        Return
+    EndIf
+
+    If $runPauseRequested Then
+        $runPauseRequested = False
+        $running = False
+        $runPaused = True
+        $manualFocusWait = False
+        $manualFocusWasDown = False
+        GUICtrlSetData($btnStart, "Stop")
+        GUICtrlSetData($status, PauseContinueStatusText())
+        Return
+    EndIf
+
+    If HR_CurrentRunMode() = "MF" Then
+        _StopManualFlowAfterStep()
+        Return
+    EndIf
+
+    If Not SafeSleep(Number(GUICtrlRead($inputAction)) * 1000) Then Return
+
+EndFunc
+
+Func _ValidateRunResolution()
+
+    If _SkipResolutionCheck() Then Return True
+
+    Local $recorded = ""
+    Local $current = @DesktopWidth & "x" & @DesktopHeight
+
+    For $i = 1 To $runLines[0]
+        Local $line = StringStripWS($runLines[$i], 3)
+        If $line = "" Then ContinueLoop
+
+        If StringLeft($line, 14) = ";= Resolution " Then
+            $recorded = StringStripWS(StringTrimLeft($line, 14), 3)
+        EndIf
+
+        ExitLoop
+    Next
+
+    If $recorded = "" Then Return True
+    If $recorded = $current Then Return True
+
+    _ShowResolutionMismatch($recorded, $current)
+
+    Return False
+
+EndFunc
+
+Func _SkipResolutionCheck()
+
+    If $chkSkipRes = 0 Then Return False
+    Return GUICtrlRead($chkSkipRes) = $GUI_CHECKED
+
+EndFunc
+
+Func _ShowResolutionMismatch($recorded, $current)
+
+    StopRun()
+    GUICtrlSetData($status, "ResMismatch: " & $current)
+
+EndFunc
+
+Func _AdvanceRunTarget()
+
+    Local $fileAuto = (HR_CurrentRunMode() = "A")
+    Local $cmdAuto = (GUICtrlRead($chkRepeat) = $GUI_CHECKED)
+
+    If $fileAuto Then
+        If _SelectNextTaskRunRecord() Then
+            _ResetRunFileState()
+            Return True
+        EndIf
+
+        If $cmdAuto Then
+            If Not SafeSleep(Number(GUICtrlRead($inputRepeat)) * 1000) Then Return True
+            If _RestartTaskRunRecords() Then
+                _ResetRunFileState()
+                Return True
+            EndIf
+        EndIf
+
+        Return False
+    EndIf
+
+    If $cmdAuto Then
+        If Not SafeSleep(Number(GUICtrlRead($inputRepeat)) * 1000) Then Return True
+        $runIndex = 1
+        $mspBaseSet = False
+        $dragDownActive = False
+        GUICtrlSetData($status, "Running")
+        Return True
+    EndIf
+
+    Return False
+
+EndFunc
+
+Func _ResetRunFileState()
+
+    $runLoaded = False
+    $runIndex = 1
+    $runPaused = False
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = False
+    $runPausedIndex = 0
+    $manualFocusWait = False
+    $manualFocusWasDown = False
+    $mspBaseSet = False
+    $dragDownActive = False
+    GUICtrlSetData($btnStart, "Stop")
+    GUICtrlSetData($status, "Running")
+
+EndFunc
+
+Func _SelectTaskRunEntry($entry)
+
+    $entry = StringStripWS($entry, 3)
+    If $entry = "" Then Return False
+
+    If StringInStr($entry, "") > 0 Or StringInStr($entry, "/") > 0 Then
+        Local $full = HR_NormalizePath($entry)
+        If Not FileExists($full) Then Return False
+
+        $currentFile = $full
+        Local $base = $full
+        Local $p1 = StringInStr($base, "", 0, -1)
+        Local $p2 = StringInStr($base, "/", 0, -1)
+        If $p2 > $p1 Then $p1 = $p2
+        If $p1 > 0 Then $base = StringMid($base, $p1 + 1)
+        If StringRight(StringLower($base), 4) = ".rec" Then $base = StringTrimRight($base, 4)
+        $gLoadedRecordName = $base
+        GUICtrlSetData($cmbFiles, $full)
+        LoadCommands($currentFile)
+        Return True
+    EndIf
+
+    Return SelectRecordByName($entry)
+
+EndFunc
+Func _SelectNextTaskRunRecord()
+
+    If $taskRunMode Then
+        $taskRunPos += 1
+        If $taskRunPos >= UBound($taskRunList) Then Return False
+        Return _SelectTaskRunEntry($taskRunList[$taskRunPos])
+    EndIf
+
+    Return SelectNextRecordForRun()
+
+EndFunc
+
+Func _RestartTaskRunRecords()
+
+    If $taskRunMode Then
+        $taskRunPos = 1
+        If UBound($taskRunList) <= 1 Then Return False
+        Return _SelectTaskRunEntry($taskRunList[$taskRunPos])
+    EndIf
+
+    Return SelectFirstRecordFile()
+
+EndFunc
+
+Func _OffsetReanchorEnabled()
+
+    If $chkReanchor = 0 Then Return False
+    Return GUICtrlRead($chkReanchor) = $GUI_CHECKED
+
+EndFunc
+
+Func _IsOffsetStartComment($line)
+
+    Local $txt = StringStripWS($line, 3)
+    Return StringLeft($txt, StringLen(";= Offset Start")) = ";= Offset Start"
+
+EndFunc
+
+Func _WaitForOffsetReanchor()
+
+    $running = False
+    $runPaused = True
+    GUICtrlSetData($btnStart, "Stop")
+    GUICtrlSetData($status, "Click reanchor")
+
+    While 1
+        Sleep(10)
+
+        Local $msg = GUIGetMsg()
+        Switch $msg
+            Case $GUI_EVENT_CLOSE
+                Exit
+            Case $btnStart
+                StopRun()
+                Return False
+        EndSwitch
+
+        If Not $runPaused Then Return False
+
+        If _IsPressed("01") Then
+            If _MouseInsideRecorderUI() Then ContinueLoop
+
+            Local $m = MouseGetPos()
+            $mspBaseX = $m[0]
+            $mspBaseY = $m[1]
+            $mspBaseSet = True
+            $mspReanchorActive = True
+            $mspSkipNextBase = True
+
+            IniWrite($iniFile, "Settings", "offset_reanchor_date", @YEAR & @MON & @MDAY)
+
+            While _IsPressed("01")
+                Sleep(10)
+            WEnd
+
+Func RunSelectedRecordFile()
+
+    If $running Then StopRun()
+    If HR_CurrentRunMode() = "MF" Then
+        StartManualFlowStep()
+        Return
+    EndIf
+
+    Local $recName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    StartRun(VarRecordFlag($recName, "next", "0"))
+
+EndFunc
+EndFunc
+
+Func RunSelectedRecordFile()
+
+    If $running Then StopRun()
+    Local $recName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    StartRun(VarRecordFlag($recName, "next", "0"))
+
+EndFunc
+
+Func _RunRecordFileByNumber($num)
+
+    Local $pos = Number($num)
+    If $num = "0" Then $pos = 10
+
+    If SelectRecordByListPosition($pos) Then
+        If $running Then StopRun()
+        StartRun()
+    EndIf
+
+EndFunc
+
+Func RunRecordFile1()
+    _RunRecordFileByNumber("1")
+EndFunc
+
+Func RunRecordFile2()
+    _RunRecordFileByNumber("2")
+EndFunc
+
+Func RunRecordFile3()
+    _RunRecordFileByNumber("3")
+EndFunc
+
+Func RunRecordFile4()
+    _RunRecordFileByNumber("4")
+EndFunc
+
+Func RunRecordFile5()
+    _RunRecordFileByNumber("5")
+EndFunc
+
+Func RunRecordFile6()
+    _RunRecordFileByNumber("6")
+EndFunc
+
+Func RunRecordFile7()
+    _RunRecordFileByNumber("7")
+EndFunc
+
+Func RunRecordFile8()
+    _RunRecordFileByNumber("8")
+EndFunc
+
+Func RunRecordFile9()
+    _RunRecordFileByNumber("9")
+EndFunc
+
+Func RunRecordFile0()
+    _RunRecordFileByNumber("0")
+EndFunc
+
+Func ExecuteCompiledCommand($line, $idx)
+
+    Local $compiled = ""
+    If IsArray($gCompiledLines) And $idx >= 1 And $idx <= UBound($gCompiledLines) - 1 Then $compiled = $gCompiledLines[$idx]
+
+    ExecuteCompiledText($compiled, $line)
+
+EndFunc
+
+Func ExecuteCompiledText($compiled, $rawLine)
+
+    $compiled = StringStripWS($compiled, 3)
+    If $compiled = "" Then
+        ExecuteCommand($rawLine)
+        Return
+    EndIf
+
+    Local $ok = Execute($compiled)
+    If @error Then
+        GUICtrlSetData($status, "CompileExecErr")
+        ExecuteCommand($rawLine)
+    EndIf
+
+EndFunc
+
+Func HR_RunAnchor($startPos, $endPos, $repeat, $delaySeconds)
+
+    Local $delayMs = Number($delaySeconds) * 1000
+    If $delayMs > 0 Then SafeSleep($delayMs)
+
+EndFunc
+Func HR_RunMSP($cmd, $xVal, $yVal, $btn, $repeat, $delaySeconds)
+
+    Local $x = 0
+    Local $y = 0
+    Local $mspStep = _MspStepNumber($cmd)
+
+    If $mspStep = 1 Then
+        If $mspBaseFromMSM Then
+            $x = $mspBaseX + Number($xVal)
+            $y = $mspBaseY + Number($yVal)
+        ElseIf $mspSkipNextBase And $mspReanchorActive Then
+            $mspSkipNextBase = False
+            Return
+        Else
+            $mspBaseX = Number($xVal)
+            $mspBaseY = Number($yVal)
+            $mspBaseSet = True
+            $x = $mspBaseX
+            $y = $mspBaseY
+        EndIf
+    ElseIf $mspStep > 1 Then
+        If Not $mspBaseSet Then Return
+        $x = $mspBaseX + Number($xVal)
+        $y = $mspBaseY + Number($yVal)
+    Else
+        Return
+    EndIf
+
+    _DoMouseAction($x, $y, $btn, Number($repeat))
+
+    Local $delayMs = Number($delaySeconds) * 1000
+    If $delayMs > 0 Then SafeSleep($delayMs)
+
+EndFunc
+Func HR_RunMSM($cmd, $xVal, $yVal, $repeat, $delaySeconds)
+
+    Local $mx = 0
+    Local $my = 0
+    Local $msmStep = _MspStepNumber($cmd)
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+    Local $delayMs = Number($delaySeconds) * 1000
+
+    If $msmStep = 1 Then
+        If $mspSkipNextBase And $mspReanchorActive Then
+            $mspSkipNextBase = False
+            $mspBaseFromMSM = True
+            Return
+        EndIf
+
+        $mspBaseX = Number($xVal)
+        $mspBaseY = Number($yVal)
+        $mspBaseSet = True
+        $mspBaseFromMSM = True
+        $mx = $mspBaseX
+        $my = $mspBaseY
+    ElseIf $msmStep > 1 Then
+        If Not $mspBaseSet Then Return
+        $mx = $mspBaseX + Number($xVal)
+        $my = $mspBaseY + Number($yVal)
+    Else
+        Return
+    EndIf
+
+    For $i = 1 To $r
+        MouseMove($mx, $my, 0)
+        If $i < $r And $delayMs > 0 Then
+            If Not SafeSleep($delayMs) Then Return
+        EndIf
+    Next
+
+EndFunc
+Func HR_RunDrag($startPos, $endPos, $btn, $repeat, $delaySeconds)
+
+    If StringInStr($startPos, "~") < 1 Or StringInStr($endPos, "~") < 1 Then Return
+
+    Local $startPair = StringSplit($startPos, "~")
+    Local $endPair = StringSplit($endPos, "~")
+    If $startPair[0] < 2 Or $endPair[0] < 2 Then Return
+
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+    Local $delayMs = Number($delaySeconds) * 1000
+
+    For $i = 1 To $r
+        MouseClickDrag(_MouseButtonName($btn), Number($startPair[1]), Number($startPair[2]), Number($endPair[1]), Number($endPair[2]), 0)
+        If $i < $r And $delayMs > 0 Then
+            If Not SafeSleep($delayMs) Then Return
+        EndIf
+    Next
+
+EndFunc
+Func HR_RunMouseAction($x, $y, $btn, $repeat)
+
+    _DoMouseAction(Number($x), Number($y), $btn, Number($repeat))
+
+EndFunc
+
+Func HR_RunMouseDown($x, $y, $btn, $repeat, $delaySeconds)
+
+    Local $delayMs = Number($delaySeconds) * 1000
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+
+    For $i = 1 To $r
+        MouseMove(Number($x), Number($y), 0)
+        MouseDown(_MouseButtonName($btn))
+        If $delayMs > 0 Then
+            If Not SafeSleep($delayMs) Then Return
+        EndIf
+    Next
+
+EndFunc
+
+Func HR_RunMouseUp($x, $y, $btn, $repeat, $delaySeconds)
+
+    Local $delayMs = Number($delaySeconds) * 1000
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+
+    For $i = 1 To $r
+        MouseMove(Number($x), Number($y), 0)
+        MouseUp(_MouseButtonName($btn))
+        If $i < $r And $delayMs > 0 Then
+            If Not SafeSleep($delayMs) Then Return
+        EndIf
+    Next
+
+EndFunc
+
+Func HR_RunMouseMove($x, $y, $speed, $repeat, $delaySeconds)
+
+    Local $delayMs = Number($delaySeconds) * 1000
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+
+    For $i = 1 To $r
+        MouseMove(Number($x), Number($y), Number($speed))
+        If $i < $r And $delayMs > 0 Then
+            If Not SafeSleep($delayMs) Then Return
+        EndIf
+    Next
+
+EndFunc
+
+Func HR_RunSend($text, $repeat, $delaySeconds)
+
+    Local $delayMs = Number($delaySeconds) * 1000
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+
+    For $i = 1 To $r
+        Send($text)
+        If $i < $r Then
+            If $delayMs > 0 Then
+                If Not SafeSleep($delayMs) Then Return
+            Else
+                If Not SafeSleep(80) Then Return
+            EndIf
+        EndIf
+    Next
+
+EndFunc
+
+Func HR_RunWheel($dir, $repeat, $delaySeconds = 0)
+
+    Local $delayMs = Number($delaySeconds) * 1000
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+
+    For $i = 1 To $r
+        If StringUpper($dir) = "UP" Then
+            MouseWheel("up", 1)
+        Else
+            MouseWheel("down", 1)
+        EndIf
+
+        If $i < $r Then
+            If $delayMs > 0 Then
+                If Not SafeSleep($delayMs) Then Return
+            Else
+                If Not SafeSleep(80) Then Return
+            EndIf
+        EndIf
+    Next
+
+EndFunc
+
+Func HR_RunPause($seconds, $focus)
+
+    Local $pauseSeconds = Number($seconds)
+    If $pauseSeconds < 0 Then $pauseSeconds = 0
+
+    If $pauseSeconds <= 0 Then
+        If $focus Then
+            $runFocusPauseRequested = True
+        Else
+            $runPauseRequested = True
+        EndIf
+        Return
+    EndIf
+
+    _PauseWait($pauseSeconds * 1000)
+
+EndFunc
+
+Func HR_RunDelay($seconds, $repeat)
+
+    Local $delayMs = Number($seconds) * 1000
+    If $delayMs < 0 Then $delayMs = 0
+
+    Local $r = Number($repeat)
+    If $r < 1 Then $r = 1
+
+    For $i = 1 To $r
+        If Not SafeSleep($delayMs) Then Return
+    Next
+
+EndFunc
+Func ExecuteCommand($line)
+
+    Local $p = StringSplit($line, ",")
+
+    If $p[0] < 1 Then Return
+
+    Local $cmd = $p[1]
+
+    ; Anchor_group,x1~x2,y1~y2,,1,delay,rem_idx
+    ; Defines the image-search region for an offset block.
+    ; It is passive during playback: show/review, wait optional delay, then continue.
+    If StringLeft($cmd, 7) = "Anchor_" Then
+        Local $anchorDelay = _GetDelayMs($p, 6)
+        If $anchorDelay > 0 Then SafeSleep($anchorDelay)
+        Return
+    EndIf
+
+    ; =====================================
+    ; OFFSET MOUSE
+    ; MSP_group_1,x,y,L,repeat,delay,rem_offset_base
+    ; MSP_group_N,dx,dy,L,repeat,delay,rem_offset
+    ; =====================================
+
+    If StringLeft($cmd, 4) = "MSP_" Then
+
+        If $p[0] < 4 Then Return
+
+        Local $x = 0
+        Local $y = 0
+
+        Local $mspStep = _MspStepNumber($cmd)
+
+        If $mspStep = 1 Then
+
+            If $mspBaseFromMSM Then
+                $x = $mspBaseX + Number($p[2])
+                $y = $mspBaseY + Number($p[3])
+            ElseIf $mspSkipNextBase And $mspReanchorActive Then
+                $mspSkipNextBase = False
+                Return
+            Else
+                $mspBaseX = Number($p[2])
+                $mspBaseY = Number($p[3])
+                $mspBaseSet = True
+
+                $x = $mspBaseX
+                $y = $mspBaseY
+            EndIf
+
+        ElseIf $mspStep > 1 Then
+
+            If Not $mspBaseSet Then Return
+
+            $x = $mspBaseX + Number($p[2])
+            $y = $mspBaseY + Number($p[3])
+
+        Else
+
+            Return
+
+        EndIf
+
+        Local $btn = $p[4]
+        Local $repeat = _GetRepeat($p, 5)
+
+        _DoMouseAction($x, $y, $btn, $repeat)
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; OFFSET MOUSE MOVE / MARKER
+    ; MSM_group_1,x,y,S,repeat,delay,rem_anchor
+    ; MSM_group_N,dx,dy,,repeat,delay,rem_region
+    ; =====================================
+
+    If StringLeft($cmd, 4) = "MSM_" Then
+
+        If $p[0] < 4 Then Return
+
+        Local $mx = 0
+        Local $my = 0
+        Local $msmStep = _MspStepNumber($cmd)
+
+        If $msmStep = 1 Then
+            If $mspSkipNextBase And $mspReanchorActive Then
+                $mspSkipNextBase = False
+                $mspBaseFromMSM = True
+                Return
+            EndIf
+
+            $mspBaseX = Number($p[2])
+            $mspBaseY = Number($p[3])
+            $mspBaseSet = True
+            $mspBaseFromMSM = True
+            $mx = $mspBaseX
+            $my = $mspBaseY
+        ElseIf $msmStep > 1 Then
+            If Not $mspBaseSet Then Return
+            $mx = $mspBaseX + Number($p[2])
+            $my = $mspBaseY + Number($p[3])
+        Else
+            Return
+        EndIf
+
+        MouseMove($mx, $my, 0)
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; NORMAL MOUSE
+    ; M_P1,x,y,L,repeat,delay,rem_mouse
+    ; C means center/middle mouse button.
+    ; =====================================
+
+    If StringLeft($cmd, 2) = "M_" Then
+
+        If $p[0] < 4 Then Return
+
+        Local $x = Number($p[2])
+        Local $y = Number($p[3])
+        Local $btn = $p[4]
+        Local $repeat = _GetRepeat($p, 5)
+        Local $mouseDelay = _GetDelayMs($p, 6)
+
+        If StringLeft($cmd, 3) = "M_D" Then
+            For $i = 1 To $repeat
+                MouseMove($x, $y, 0)
+                MouseDown(_MouseButtonName($btn))
+                If $mouseDelay > 0 Then
+                    If Not SafeSleep($mouseDelay) Then Return
+                EndIf
+            Next
+            Return
+        EndIf
+
+        If StringLeft($cmd, 3) = "M_U" Then
+            For $i = 1 To $repeat
+                MouseMove($x, $y, 0)
+                MouseUp(_MouseButtonName($btn))
+                If $i < $repeat And $mouseDelay > 0 Then
+                    If Not SafeSleep($mouseDelay) Then Return
+                EndIf
+            Next
+            Return
+        EndIf
+
+        _DoMouseAction($x, $y, $btn, $repeat)
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; MOUSE DRAG
+    ; Current:
+    ; MD_D1,x1~x2,y1~y2,L,speed,delay,rem_drag
+    ;
+    ; =====================================
+
+    If StringLeft($cmd, 3) = "MD_" Then
+
+        If $p[0] < 4 Then Return
+
+        Local $dbtn = $p[4]
+
+        If StringInStr($p[2], "~") > 0 And StringInStr($p[3], "~") > 0 Then
+            Local $xPair = StringSplit($p[2], "~")
+            Local $yPair = StringSplit($p[3], "~")
+
+            If $xPair[0] < 2 Or $yPair[0] < 2 Then Return
+
+            Local $dragSpeed = Number($p[5])
+            Local $dragDelay = _GetDelayMs($p, 6)
+
+            MouseClickDrag(_MouseButtonName($dbtn), Number($xPair[1]), Number($yPair[1]), Number($xPair[2]), Number($yPair[2]), $dragSpeed)
+
+            If $dragDelay > 0 Then SafeSleep($dragDelay)
+
+            Return
+        EndIf
+
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; MOUSE MOVE
+    ; MM_M1,x,y,speed,repeat,delay,rem_move
+    ; =====================================
+
+    If StringLeft($cmd, 3) = "MM_" Then
+
+        If $p[0] < 4 Then Return
+
+        Local $mx = Number($p[2])
+        Local $my = Number($p[3])
+        Local $speed = Number($p[4])
+        Local $repeatMove = _GetRepeat($p, 5)
+        Local $moveDelay = _GetDelayMs($p, 6)
+
+        For $i = 1 To $repeatMove
+            MouseMove($mx, $my, $speed)
+
+            If $i < $repeatMove And $moveDelay > 0 Then
+                If Not SafeSleep($moveDelay) Then Return
+            EndIf
+        Next
+
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; KEYBOARD
+    ; K_B1,^c,repeat,delay,rem_key
+    ; K_B1,{PGDN},repeat,delay,rem_key
+    ; =====================================
+
+    If StringLeft($cmd, 2) = "K_" Then
+
+        If $p[0] < 2 Then Return
+
+        Local $key = $p[2]
+        Local $repeat = _GetRepeat($p, 3)
+
+        For $i = 1 To $repeat
+            Send($key)
+
+            If $i < $repeat Then
+                If Not SafeSleep(80) Then Return
+            EndIf
+        Next
+
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; MOUSE WHEEL
+    ; MW_W1,UP,repeat,delay,rem_wheel
+    ; MW_W1,DOWN,repeat,delay,rem_wheel
+    ; =====================================
+
+    If StringLeft($cmd, 3) = "MW_" Then
+
+        If $p[0] < 2 Then Return
+
+        Local $dir = $p[2]
+        Local $repeat = _GetRepeat($p, 3)
+
+        For $i = 1 To $repeat
+
+            If $dir = "UP" Then
+                MouseWheel("up", 1)
+            Else
+                MouseWheel("down", 1)
+            EndIf
+
+            If $i < $repeat Then
+                If Not SafeSleep(80) Then Return
+            EndIf
+        Next
+
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; STRING
+    ; S_S1,"text",repeat,delay,rem_string
+    ; =====================================
+
+    If StringLeft($cmd, 2) = "S_" Then
+
+        Local $s = _CsvField($line, 2)
+        If $s = "" Then Return
+
+        Local $repeatString = Number(_CsvField($line, 3))
+        If $repeatString < 1 Then $repeatString = 1
+
+        Local $stringDelay = Number(_CsvField($line, 4)) * 1000
+        If $stringDelay < 0 Then $stringDelay = 0
+
+        If StringLeft($s, 1) = '"' And StringRight($s, 1) = '"' Then
+            $s = StringTrimLeft(StringTrimRight($s, 1), 1)
+            $s = StringReplace($s, '""', '"')
+        EndIf
+
+        For $i = 1 To $repeatString
+            Send($s)
+
+            If $i < $repeatString And $stringDelay > 0 Then
+                If Not SafeSleep($stringDelay) Then Return
+            EndIf
+        Next
+
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; PAUSE
+    ; P_P1,"instruction",1,delay,rem_pause
+    ; P_F1,"instruction",1,,rem_focus_pause
+    ; P_P1 blank/zero delay pauses until F9 or the > button.
+    ; P_F1 blank/zero delay waits for a target click, then continues.
+    ; =====================================
+
+    If StringLeft($cmd, 2) = "P_" Then
+
+        Local $pauseSeconds = Number(_CsvField($line, 4))
+
+        If $pauseSeconds < 0 Then $pauseSeconds = 0
+
+        If $pauseSeconds <= 0 Then
+            If _IsFocusPauseLine($line) Then
+                $runFocusPauseRequested = True
+            Else
+                $runPauseRequested = True
+            EndIf
+            Return
+        EndIf
+
+        _PauseWait($pauseSeconds * 1000)
+        Return
+
+    EndIf
+
+    ; =====================================
+    ; TIME DELAY
+    ; T_D1,seconds,repeat,,rem_delay
+    ; Uses SafeSleep only.
+    ; =====================================
+
+    If StringLeft($cmd, 2) = "T_" Then
+
+        If $p[0] < 2 Then Return
+
+        Local $seconds = Number($p[2])
+        If $seconds < 0 Then $seconds = 0
+
+        Local $repeatDelay = _GetRepeat($p, 3)
+        Local $delayMs = $seconds * 1000
+
+        For $i = 1 To $repeatDelay
+            If Not SafeSleep($delayMs) Then Return
+        Next
+
+        Return
+
+    EndIf
+
+EndFunc
+
+Func _PauseWait($ms)
+
+    Local $timer = TimerInit()
+
+    $running = False
+    $runPaused = True
+    $runPauseContinueRequested = False
+
+    GUICtrlSetData($btnStart, "Stop")
+    GUICtrlSetData($status, "Pause")
+
+    While TimerDiff($timer) < $ms
+
+        Sleep(3)
+
+        Local $msg = GUIGetMsg()
+
+        Switch $msg
+
+            Case $btnRun
+                ContinuePausedRun()
+                ExitLoop
+
+            Case $btnStart
+                StopRun()
+                Return
+
+            Case $GUI_EVENT_CLOSE
+                Exit
+
+        EndSwitch
+
+        If $runPauseContinueRequested Then ExitLoop
+        If Not $runPaused Then ExitLoop
+
+    WEnd
+
+    If $runPaused Then
+        ContinuePausedRun()
+    EndIf
+
+EndFunc
+
+Func ReloadPausedRunAfterRecord($activeIndex, $displayIndex = 0)
+
+    If $activeIndex < 1 Then $activeIndex = 1
+
+    _FileReadToArray($currentFile, $runLines)
+    If @error Then
+        StopRun()
+        Return
+    EndIf
+
+    $runLoaded = True
+    $running = False
+    $runPaused = True
+    $runPauseRequested = False
+    $runFocusPauseRequested = False
+    $runPauseContinueRequested = False
+    $runPausedIndex = $activeIndex
+    $runIndex = $activeIndex + 1
+
+    If $runIndex < 1 Then $runIndex = 1
+    If $runIndex > $runLines[0] Then $runIndex = $runLines[0] + 1
+
+    If $displayIndex < 1 Then $displayIndex = $activeIndex
+    If $displayIndex > $runLines[0] Then $displayIndex = $runLines[0]
+    If $displayIndex < 1 Then $displayIndex = 1
+
+    _RenderCommands($displayIndex)
+    GUICtrlSetData($btnStart, "Stop")
+    If $gPatchSavedPrompt Then
+        GUICtrlSetData($status, "Saved F9=Run")
+    Else
+        GUICtrlSetData($status, PauseContinueStatusText())
+    EndIf
+
+EndFunc
+
+Func _GetRepeat(ByRef $p, $idx)
+
+    Local $repeat = 1
+
+    If $p[0] >= $idx Then
+        If StringStripWS($p[$idx], 3) <> "" Then
+            $repeat = Number($p[$idx])
+        EndIf
+    EndIf
+
+    If $repeat < 1 Then $repeat = 1
+
+    Return $repeat
+
+EndFunc
+
+Func _MspStepNumber($cmd)
+
+    Local $parts = StringSplit($cmd, "_")
+
+    If $parts[0] >= 3 Then Return Number($parts[3])
+    If $parts[0] = 2 Then Return Number($parts[2])
+
+    Return 0
+
+EndFunc
+
+Func _GetDelayMs(ByRef $p, $idx)
+
+    Local $ms = 0
+
+    If $p[0] >= $idx Then
+        If StringStripWS($p[$idx], 3) <> "" Then
+            $ms = Number($p[$idx]) * 1000
+        EndIf
+    EndIf
+
+    If $ms < 0 Then $ms = 0
+
+    Return $ms
+
+EndFunc
+
+Func _CsvField($line, $target)
+
+    Local $field = 1
+    Local $text = ""
+    Local $inQuote = False
+    Local $len = StringLen($line)
+
+    For $i = 1 To $len
+
+        Local $ch = StringMid($line, $i, 1)
+
+        If $ch = '"' Then
+            If $inQuote And $i < $len And StringMid($line, $i + 1, 1) = '"' Then
+                $text &= '""'
+                $i += 1
+                ContinueLoop
+            EndIf
+
+            $inQuote = Not $inQuote
+            $text &= $ch
+            ContinueLoop
+        EndIf
+
+        If $ch = "," And Not $inQuote Then
+            If $field = $target Then Return $text
+            $field += 1
+            $text = ""
+            ContinueLoop
+        EndIf
+
+        $text &= $ch
+
+    Next
+
+    If $field = $target Then Return $text
+
+    Return ""
+Func FocusPauseStatusText()
+
+    Local $first = _PauseCurrentCommandAngleLabel(1)
+    Local $second = _PauseCurrentCommandAngleLabel(2)
+
+    If $first = "" Then $first = "target"
+    If $second <> "" Then Return "Ctrl+Click " & $first & " to " & $second
+    Return "Ctrl+Click " & $first
+
+EndFunc
+    Return "F9=continue"
+
+EndFunc
+
+Func FocusPauseStatusText()
+
+    Local $first = _PauseCurrentCommandAngleLabel(1)
+    Local $second = _PauseCurrentCommandAngleLabel(2)
+
+    If $first = "" Then $first = "target"
+    If $second <> "" Then Return "Ctrl+Click " & $first & " to " & $second
+    Return "Ctrl+Click " & $first
+
+EndFunc
+Func _PauseCurrentCommandAngleLabel($which)
+
+    Local $line = ""
+    If $runPausedIndex >= 1 And $runPausedIndex <= UBound($runLines) - 1 Then $line = $runLines[$runPausedIndex]
+    Return _CommandAngleLabelByIndex($line, $which)
+
+EndFunc
+Func _PauseCurrentCommandLabel()
+
+    Local $line = ""
+    If $runPausedIndex >= 1 And $runPausedIndex <= UBound($runLines) - 1 Then $line = $runLines[$runPausedIndex]
+    Return _CommandAngleLabel($line)
+
+EndFunc
+
+Func _PauseNextCommandLabel()
+
+    Local $line = _NextExecutableRunLine()
+    If $line <> "" Then Return _CommandAngleLabel($line)
+
+    If $taskRunMode Then
+        Local $nextPos = $taskRunPos + 1
+        If $nextPos > 0 And $nextPos < UBound($taskRunList) Then Return _FirstCommandLabelFromRecord($taskRunList[$nextPos])
+    EndIf
+
+    Return ""
+
+EndFunc
+
+Func _NextExecutableRunLine()
+
+    If $runIndex < 1 Then Return ""
+    If UBound($runLines) <= 1 Then Return ""
+
+    Local $last = UBound($runLines) - 1
+    For $i = $runIndex To $last
+        Local $line = StringStripWS($runLines[$i], 3)
+        If $line = "" Then ContinueLoop
+        If StringLeft($line, 2) = ";=" Then ContinueLoop
+        Return $line
+    Next
+
+    Return ""
+
+EndFunc
+
+Func _FirstCommandLabelFromRecord($name)
+
+    Local $path = RecordPath($name)
+    If $path = "" Or Not FileExists($path) Then Return ""
+
+    Local $lines[1]
+    _FileReadToArray($path, $lines)
+    If @error Then Return ""
+
+    For $i = 1 To $lines[0]
+        Local $line = StringStripWS($lines[$i], 3)
+        If $line = "" Then ContinueLoop
+        If StringLeft($line, 2) = ";=" Then ContinueLoop
+        Return _CommandAngleLabel($line)
+    Next
+
+    Return ""
+
+EndFunc
+
+Func _CommandAngleLabel($line)
+
+    Return _CommandAngleLabelByIndex($line, 1)
+
+EndFunc
+
+Func _CommandAngleLabelByIndex($line, $which)
+
+    Local $rem = _PauseRemText($line)
+    Local $searchFrom = 1
+
+    For $i = 1 To $which
+        Local $left = StringInStr($rem, "<", 0, 1, $searchFrom)
+        If $left < 1 Then Return ""
+
+        Local $right = StringInStr($rem, ">", 0, 1, $left + 1)
+        If $right <= $left Then Return ""
+
+        If $i = $which Then
+            Local $label = StringMid($rem, $left + 1, $right - $left - 1)
+            If StringStripWS($label, 3) = "" Then Return ""
+            Return "<" & $label & ">"
+        EndIf
+
+        $searchFrom = $right + 1
+    Next
+
+    Return ""
+
+EndFunc
+Func _PauseRemText($line)
+
+    Local $pos = StringInStr($line, "rem_")
+    If $pos < 1 Then Return ""
+    Return StringMid($line, $pos + 4)
+
+EndFunc
+
+Func PauseNeedsManualFocusWarning()
+
+    Return _PausedLineHasManualFocus()
+
+EndFunc
+
+Func _PausedAtIndefinitePauseCommand()
+
+    If $runPausedIndex < 1 Then Return False
+    If $runPausedIndex > UBound($runLines) - 1 Then Return False
+
+    Local $line = StringStripWS($runLines[$runPausedIndex], 3)
+    If StringLeft($line, 2) <> "P_" Then Return False
+
+    Local $pauseSeconds = Number(_CsvField($line, 4))
+    Return $pauseSeconds <= 0
+
+EndFunc
+
+Func _PausedLineHasManualFocus()
+
+    If Not _PausedAtIndefinitePauseCommand() Then Return False
+
+    Local $line = $runLines[$runPausedIndex]
+    If _IsFocusPauseLine($line) Then Return True
+    Return StringInStr(StringLower($line), "manual_focus") > 0
+
+EndFunc
+
+Func _MarkPausedLineManualFocus()
+
+    If Not _PausedAtIndefinitePauseCommand() Then Return
+
+    $runLines[$runPausedIndex] = _SetFocusPauseLine($runLines[$runPausedIndex])
+
+    If $runPausedIndex >= 1 And $runPausedIndex <= UBound($gCurrLines) - 1 Then
+        $gCurrLines[$runPausedIndex] = $runLines[$runPausedIndex]
+        $gActiveIndex = $runPausedIndex
+        $gLastVisibleText = $runLines[$runPausedIndex]
+    EndIf
+
+    _WriteRunLinesToCurrentFile()
+    LoadCommandsFromArray($runLines)
+    _RenderCommands($runPausedIndex)
+    GUICtrlSetData($cmbCmd, $runLines[$runPausedIndex])
+
+EndFunc
+
+Func _IsFocusPauseLine($line)
+
+    Local $trim = StringStripWS($line, 3)
+    If StringLeft($trim, 4) = "P_F1" Then Return True
+    If StringLeft($trim, 3) = "P_F" Then Return True
+    Return False
+
+EndFunc
+
+Func _SetFocusPauseLine($line)
+
+    If _IsFocusPauseLine($line) Then Return $line
+
+    Local $comma = StringInStr($line, ",")
+    If $comma > 0 Then Return "P_F1" & StringMid($line, $comma)
+
+    Return 'P_F1,"",1,,rem_focus_pause'
+
+EndFunc
+
+Func _AppendManualFocusRem($line)
+    Return _SetFocusPauseLine($line)
+EndFunc
+
+Func _WriteRunLinesToCurrentFile()
+
+    If $currentFile = "" Then Return
+
+    Local $h = FileOpen($currentFile, 2)
+    If $h = -1 Then Return
+
+    For $i = 1 To UBound($runLines) - 1
+        Local $line = StringStripWS($runLines[$i], 3)
+        If $line = "" Then ContinueLoop
+        FileWriteLine($h, $line)
+    Next
+
+    FileClose($h)
+
+EndFunc
+
+Func _DoMouseAction($x, $y, $btn, $repeat)
+
+    For $i = 1 To $repeat
+
+        MouseMove($x, $y, 0)
+
+        Switch $btn
+
+            Case "L"
+                MouseClick("left")
+
+            Case "R"
+                MouseClick("right")
+
+            Case "C"
+                MouseClick("middle")
+
+            Case "D"
+                MouseClick("left", $x, $y, 2)
+
+        EndSwitch
+
+        If $i < $repeat Then
+            If Not SafeSleep(80) Then Return
+        EndIf
+
+    Next
+
+EndFunc
+
+Func _MouseButtonName($btn)
+
+    Switch $btn
+        Case "R"
+            Return "right"
+        Case "C"
+            Return "middle"
+    EndSwitch
+
+    Return "left"
+
+EndFunc
+
+Func SafeSleep($ms)
+
+    Local $timer = TimerInit()
+
+    While TimerDiff($timer) < $ms
+
+        Sleep(3)
+
+        Local $msg = GUIGetMsg()
+
+        Switch $msg
+
+            Case $btnStart
+                StopRun()
+                Return False
+
+            Case $btnRun
+                ContinuePausedRun()
+                Return True
+
+            Case $GUI_EVENT_CLOSE
+                Exit
+
+        EndSwitch
+
+        If $runPaused Then
+            Return False
+        EndIf
+
+        If Not $running Then
+            Return False
+        EndIf
+
+    WEnd
+
+    Return True
+
+EndFunc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

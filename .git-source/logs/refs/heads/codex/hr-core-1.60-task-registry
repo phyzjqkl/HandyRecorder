@@ -1,0 +1,12 @@
+0000000000000000000000000000000000000000 fcebcc7250070d284dc82b9d531880499767ecfd phyzjqkl <phyzjqk@hotmail.com> 1781623578 -0400	branch: Created from HEAD
+fcebcc7250070d284dc82b9d531880499767ecfd 80e2d9665c0762012ce0481b07a8630c5bba4157 phyzjqkl <phyzjqk@hotmail.com> 1781623668 -0400	commit: Start HandyRecorder 1.60 task registry
+80e2d9665c0762012ce0481b07a8630c5bba4157 92dfe53ab43c028e853f36b98d4cd092d511ad00 phyzjqkl <phyzjqk@hotmail.com> 1781626173 -0400	commit: Polish 1.60 task registry layout
+92dfe53ab43c028e853f36b98d4cd092d511ad00 39d52f9989d9b4f33e291f73ad9c90fd861bb267 phyzjqkl <phyzjqk@hotmail.com> 1781628320 -0400	commit: Align SkipRes on status row
+39d52f9989d9b4f33e291f73ad9c90fd861bb267 9aa9b3436b5e819277422615c1a206e4df980260 phyzjqkl <phyzjqk@hotmail.com> 1781628617 -0400	commit: Fix SkipRes visibility on status row
+9aa9b3436b5e819277422615c1a206e4df980260 079e3f50d62f1a6c7682cabe83fd1a5a6b4856de phyzjqkl <phyzjqk@hotmail.com> 1781629989 -0400	commit: Fix New Task creation flow
+079e3f50d62f1a6c7682cabe83fd1a5a6b4856de 5d2edf453046b35dbe5aada0fbc69438bc98d861 phyzjqkl <phyzjqk@hotmail.com> 1781632114 -0400	commit: Refine 1.60 task registry model
+5d2edf453046b35dbe5aada0fbc69438bc98d861 796535fe6efd79d369639a4785c1cc24db38e3fc phyzjqkl <phyzjqk@hotmail.com> 1781640627 -0400	commit: Append 1.60 task registry checklist
+796535fe6efd79d369639a4785c1cc24db38e3fc b9c671bd1385d86c32248f133e9c47cbf017ab22 phyzjqkl <phyzjqk@hotmail.com> 1781804835 -0400	commit: Release HandyRecorder v1.65 source
+b9c671bd1385d86c32248f133e9c47cbf017ab22 1f1bae44f8a73762ef89beae66a4c38dc0985c0b phyzjqkl <phyzjqk@hotmail.com> 1782232816 -0400	commit: Implement task branch navigation v1.70
+1f1bae44f8a73762ef89beae66a4c38dc0985c0b f4df9f5fcdefa38d2731473e7561a0fc87c4121e phyzjqkl <phyzjqk@hotmail.com> 1782399207 -0400	commit: Implement offset anchor recording v1.71
+f4df9f5fcdefa38d2731473e7561a0fc87c4121e 9dab074c6b4e1f04de0edc74f8170ddf0d221e8a phyzjqkl <phyzjqk@hotmail.com> 1782467493 -0400	commit: Advance HandyRecorder source and handoff docs to v1.80

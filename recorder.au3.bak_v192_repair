@@ -1,0 +1,2282 @@
+#include <File.au3>
+#include <Misc.au3>
+#include <WinAPI.au3>
+#include <WindowsConstants.au3>
+#include <ScreenCapture.au3>
+
+Global $recording
+Global $running
+Global $runPaused
+Global $runPausedIndex
+
+Global $btnRec
+Global $status
+
+Global $currentFile
+Global $gLoadedRecordName
+Global $cmbCmd
+Global $cmbFiles
+Global $gReviewGui
+
+Global $appPath
+Global $gui
+Global $gTaskGui
+Global $gTaskMode
+
+; from filehandler.au3
+Global $gCurrLines
+Global $gActiveIndex
+Global $gLastVisibleText
+
+Global $offsetMode = False
+Global $offsetBaseSet = False
+Global $offsetBaseX = 0
+Global $offsetBaseY = 0
+Global $offsetCount = 1
+Global $offsetGroup = 0
+Global $offsetF8StartIndex = 0
+Global $offsetF8StartX = 0
+Global $offsetF8StartY = 0
+Global $offsetAnchorRegionSet = False
+Global $offsetAnchorSet = False
+
+Global $mouseWasDown = False
+Global $mouseDownInUI = False
+Global $mouseButton = ""
+Global $mouseDownX = 0
+Global $mouseDownY = 0
+Global $mouseDownTimer = TimerInit()
+Global $mouseLongPressActive = False
+
+Global $gTooltipEnabled = True
+Global $gTooltipLastTimer = TimerInit()
+Global $gTooltipVisible = False
+
+Global $keyCount = 0
+Global $keyCode[160]
+Global $keyName[160]
+Global $keyDown[160]
+Global $keyTotal = 0
+Global $gLastKeyTimer = TimerInit()
+Global $gStringMode = False
+Global $gStringBuffer = ""
+Global $gRecordPaused = False
+Global $gRecordPauseIndex = 0
+Global $gRecordPauseTimer = TimerInit()
+Global $gRecordManualFocusWait = False
+Global $gRecordManualFocusWasDown = False
+Global $gPlaybackRecordInsert = False
+Global $gPlaybackRecordResumeIndex = 0
+Global $gPatchRecordMode = False
+Global $gPatchInsertIndex = 0
+Global $gPatchNewRecordMode = False
+Global $gPatchNewRecordUsed = False
+Global $gPatchSourceFile = ""
+Global $gPatchSourceName = ""
+Global $gPatchTaskAfterName = ""
+Global $gPlaybackRecordDisplayIndex = 0
+Global $gPatchSavedPrompt = False
+Global $gPatchMainLines[1]
+Global $gPatchMainActiveIndex = 0
+Global $gPatchMainLastVisibleText = ""
+Global $gMFDirectPatchMode = False
+Global $gMFDirectPatchResumeIndex = 0
+
+Global $chkRepeat
+Global $iniFile
+
+Global $gSavedRepeatState = 0
+Global $gAutoCommentIndex = 1
+Global $gAutoCommentBase = ""
+
+
+; =====================================================
+; LOW LEVEL MOUSE WHEEL HOOK
+; Use HR_ names to avoid conflict with AutoIt constants.
+; =====================================================
+
+Global Const $HR_WH_MOUSE_LL = 14
+Global Const $HR_WM_MOUSEWHEEL = 0x020A
+
+Global $g_hMouseHook = 0
+Global $g_hMouseHookCallback = 0
+Global $g_lastWheelTime = 0
+
+_InitKeyWatch()
+_InitWheelHook()
+
+; =====================================================
+; INIT GLOBAL MOUSE WHEEL HOOK
+; =====================================================
+
+Func _InitWheelHook()
+
+    If $g_hMouseHook <> 0 Then Return
+
+    $g_hMouseHookCallback = DllCallbackRegister("_MouseHookProc", "long", "int;wparam;lparam")
+
+    If @error Then Return
+
+    $g_hMouseHook = _WinAPI_SetWindowsHookEx( _
+        $HR_WH_MOUSE_LL, _
+        DllCallbackGetPtr($g_hMouseHookCallback), _
+        _WinAPI_GetModuleHandle(0), _
+        0)
+
+EndFunc
+
+; =====================================================
+; MOUSE HOOK PROC
+; Records wheel rotation count globally during Rec.
+; =====================================================
+
+Func _MouseHookProc($nCode, $wParam, $lParam)
+
+    If $nCode >= 0 And $wParam = $HR_WM_MOUSEWHEEL Then
+
+        If $recording And Not $running And Not $gRecordPaused Then
+
+            If Not WinActive($gui) And Not _MouseInsideRecorderUI() Then
+
+                Local $t = DllStructCreate( _
+                    "long X;long Y;dword MouseData;dword Flags;dword Time;ulong_ptr ExtraInfo", _
+                    $lParam)
+
+                Local $mouseData = DllStructGetData($t, "MouseData")
+                Local $delta = BitShift(BitAND($mouseData, 0xFFFF0000), 16)
+
+                If $delta > 32767 Then
+                    $delta -= 65536
+                EndIf
+
+                If TimerDiff($g_lastWheelTime) > 25 Then
+
+                    If $delta > 0 Then
+                        _RecordWheel("UP")
+                    ElseIf $delta < 0 Then
+                        _RecordWheel("DOWN")
+                    EndIf
+
+                    $g_lastWheelTime = TimerInit()
+
+                EndIf
+
+            EndIf
+
+        EndIf
+
+    EndIf
+
+    Return _WinAPI_CallNextHookEx($g_hMouseHook, $nCode, $wParam, $lParam)
+
+EndFunc
+
+; =====================================================
+; ADD KEY TO WATCH LIST
+; =====================================================
+
+Func _AddKey($hex, $sendName)
+
+    $keyTotal += 1
+
+    $keyCode[$keyTotal] = $hex
+    $keyName[$keyTotal] = $sendName
+    $keyDown[$keyTotal] = False
+
+EndFunc
+
+; =====================================================
+; INIT KEY WATCH LIST
+; Records alphabetic, numeric, symbol, function,
+; navigation keys.
+;
+; AutoIt Send grammar:
+; ^ = Ctrl
+; ! = Alt
+; + = Shift
+; # = Win
+; =====================================================
+
+Func _InitKeyWatch()
+
+    $keyTotal = 0
+
+    ; =================================================
+    ; A-Z
+    ; =================================================
+
+    _AddKey("41", "a")
+    _AddKey("42", "b")
+    _AddKey("43", "c")
+    _AddKey("44", "d")
+    _AddKey("45", "e")
+    _AddKey("46", "f")
+    _AddKey("47", "g")
+    _AddKey("48", "h")
+    _AddKey("49", "i")
+    _AddKey("4A", "j")
+    _AddKey("4B", "k")
+    _AddKey("4C", "l")
+    _AddKey("4D", "m")
+    _AddKey("4E", "n")
+    _AddKey("4F", "o")
+    _AddKey("50", "p")
+    _AddKey("51", "q")
+    _AddKey("52", "r")
+    _AddKey("53", "s")
+    _AddKey("54", "t")
+    _AddKey("55", "u")
+    _AddKey("56", "v")
+    _AddKey("57", "w")
+    _AddKey("58", "x")
+    _AddKey("59", "y")
+    _AddKey("5A", "z")
+
+    ; =================================================
+    ; 0-9
+    ; =================================================
+
+    _AddKey("30", "0")
+    _AddKey("31", "1")
+    _AddKey("32", "2")
+    _AddKey("33", "3")
+    _AddKey("34", "4")
+    _AddKey("35", "5")
+    _AddKey("36", "6")
+    _AddKey("37", "7")
+    _AddKey("38", "8")
+    _AddKey("39", "9")
+
+    ; =================================================
+    ; OEM SYMBOL KEYS
+    ;
+    ; These support:
+    ; = +  , <  - _  . >  / ?
+    ; ; :  [ {  ] }  \ |  ` ~  ' "
+    ;
+    ; Shift is automatically added by _BuildAutoItKey().
+    ; Example:
+    ; Shift + . becomes +.
+    ; Shift + / becomes +/
+    ; Shift + = becomes +=
+    ; =================================================
+
+    _AddKey("BB", "=")   ; = +
+    _AddKey("BC", ",")   ; , <
+    _AddKey("BD", "-")   ; - _
+    _AddKey("BE", ".")   ; . >
+    _AddKey("BF", "/")   ; / ?
+    _AddKey("BA", ";")   ; ; :
+    _AddKey("DB", "[")   ; [ {
+    _AddKey("DD", "]")   ; ] }
+    _AddKey("DC", "\")   ; \ |
+    _AddKey("C0", "`")   ; ` ~
+    _AddKey("DE", "'")   ; ' "
+
+    ; =================================================
+    ; Functional / navigation keys
+    ; =================================================
+
+    _AddKey("09", "{TAB}")
+    _AddKey("0D", "{ENTER}")
+    _AddKey("1B", "{ESC}")
+    _AddKey("08", "{BACKSPACE}")
+    _AddKey("2E", "{DELETE}")
+    _AddKey("2D", "{INSERT}")
+    _AddKey("24", "{HOME}")
+    _AddKey("23", "{END}")
+    _AddKey("21", "{PGUP}")
+    _AddKey("22", "{PGDN}")
+    _AddKey("26", "{UP}")
+    _AddKey("28", "{DOWN}")
+    _AddKey("25", "{LEFT}")
+    _AddKey("27", "{RIGHT}")
+    _AddKey("20", "{SPACE}")
+
+    ; =================================================
+    ; F1-F12
+    ; =================================================
+
+    _AddKey("70", "{F1}")
+    _AddKey("71", "{F2}")
+    _AddKey("72", "{F3}")
+    _AddKey("73", "{F4}")
+    _AddKey("74", "{F5}")
+    _AddKey("75", "{F6}")
+    _AddKey("76", "{F7}")
+    _AddKey("77", "{F8}")
+    _AddKey("78", "{F9}")
+    _AddKey("79", "{F10}")
+    _AddKey("7A", "{F11}")
+    _AddKey("7B", "{F12}")
+
+EndFunc
+
+; =====================================================
+; TOGGLE RECORD
+; Rec = record into current active buffer
+; Off = save recording buffer
+; =====================================================
+
+Func ToggleRecord()
+
+    If Not $recording Then
+        If Not $gTaskActive Then
+            GUICtrlSetData($status, "NoTask")
+            Return
+        EndIf
+
+        If $runPaused Then
+            _BeginPatchRecordBuffer()
+        Else
+            $gPlaybackRecordInsert = False
+            $gPlaybackRecordResumeIndex = 0
+            $gPatchRecordMode = False
+            $gPatchInsertIndex = 0
+        EndIf
+
+        $recording = True
+
+        $offsetMode = False
+        $offsetBaseSet = False
+        $offsetCount = 1
+        $offsetGroup = 0
+        $offsetF8StartIndex = 0
+        $offsetF8StartX = 0
+        $offsetF8StartY = 0
+        $offsetAnchorRegionSet = False
+        $offsetAnchorSet = False
+
+        $mouseWasDown = False
+        $mouseButton = ""
+        $mouseDownInUI = False
+        $mouseDownX = 0
+        $mouseDownY = 0
+        $mouseDownTimer = TimerInit()
+        $mouseLongPressActive = False
+
+        $gTooltipEnabled = (IniRead($iniFile, "Record", "tooltip_enabled", "1") = "1")
+        $gTooltipLastTimer = TimerInit()
+        $gTooltipVisible = False
+
+        $keyCount = 0
+        $gLastKeyTimer = TimerInit()
+        $gStringMode = False
+        $gStringBuffer = ""
+        If $gRecordPaused Then _UpdatePauseDelayFromRecordTimer()
+        $gRecordPaused = False
+        $gRecordPauseIndex = 0
+        $gRecordPauseTimer = TimerInit()
+        $gRecordManualFocusWait = False
+        $gRecordManualFocusWasDown = False
+        _ResetKeyStates()
+
+        ; -------------------------------------------------
+        ; During recording, reuse Auto checkbox as Auto Comment.
+        ; Idle:   Auto = repeat playback
+        ; Record: ACmt = auto screenshot/comment crop
+        ; -------------------------------------------------
+
+        $gSavedRepeatState = GUICtrlRead($chkRepeat)
+
+        GUICtrlSetData($chkRepeat, "ACmt")
+
+        If IniRead($iniFile, "AutoComment", "enabled", "1") = "1" Then
+            GUICtrlSetState($chkRepeat, $GUI_CHECKED)
+        Else
+            GUICtrlSetState($chkRepeat, $GUI_UNCHECKED)
+        EndIf
+
+        ; -------------------------------------------------
+        ; Auto comment image index
+        ; -------------------------------------------------
+
+        $gAutoCommentIndex = 1
+        $gAutoCommentBase = _GetCurrentRecordBaseName()
+
+        DirCreate($appPath & "\index")
+        DirCreate($appPath & "\export")
+
+        GUICtrlSetData($btnRec, "Off")
+        If $gPatchRecordMode Then
+            GUICtrlSetData($status, "PatchRec")
+        Else
+            GUICtrlSetData($status, "Recording")
+        EndIf
+
+    Else
+
+        If $offsetMode Then
+            AppendCommandToEnd(";= Offset End " & $offsetGroup)
+            $offsetMode = False
+            $offsetBaseSet = False
+            $offsetAnchorRegionSet = False
+            $offsetAnchorSet = False
+            $offsetF8StartIndex = 0
+        EndIf
+
+        If $gStringMode Then
+            _CommitStringMode()
+        EndIf
+
+        $gRecordPaused = False
+        $gRecordPauseIndex = 0
+        $gRecordManualFocusWait = False
+        $gRecordManualFocusWasDown = False
+
+        _HideRecorderTooltip()
+
+        If $gPatchRecordMode Then
+            _FinishPatchRecordBuffer()
+        Else
+            SaveCurrentData()
+        EndIf
+
+        ; restore Auto Repeat checkbox after recording
+        GUICtrlSetData($chkRepeat, "Auto")
+        GUICtrlSetState($chkRepeat, $gSavedRepeatState)
+
+        $recording = False
+
+        GUICtrlSetData($btnRec, "Rec")
+
+        If $gPlaybackRecordInsert Then
+            ReloadPausedRunAfterRecord($gPlaybackRecordResumeIndex, $gPlaybackRecordDisplayIndex)
+            $gPlaybackRecordInsert = False
+            $gPlaybackRecordResumeIndex = 0
+            $gPlaybackRecordDisplayIndex = 0
+        ElseIf $running Then
+            GUICtrlSetData($status, "Running")
+        ElseIf $runPaused Then
+            GUICtrlSetData($status, "Pause")
+        Else
+            GUICtrlSetData($status, "Idle")
+        EndIf
+
+    EndIf
+
+EndFunc
+
+Func CreateNewRecordAndStartRecording()
+
+    If $recording And $gPatchRecordMode Then
+        _CreatePatchNewRecordBuffer()
+        Return
+    EndIf
+
+    If $running Then Return
+    If $runPaused And Not $recording Then Return
+    If Not $gTaskActive Then
+        GUICtrlSetData($status, "NoTask")
+        Return
+    EndIf
+
+    If $recording Then
+        ToggleRecord()
+    EndIf
+
+    If $runPaused Then StopRun()
+
+    CreateNewRecord()
+    ToggleRecord()
+
+EndFunc
+
+Func SaveRecordButtonAction()
+
+    If $recording And $gPatchRecordMode Then
+        If $gPatchNewRecordMode Then
+            SaveCurrentDataNoFlow()
+        Else
+            _SyncActiveFromUI()
+            Review_SyncEditRem()
+            _PruneEmptyCommandLines()
+            _RenderCommands($gActiveIndex)
+            GUICtrlSetData($status, "PatchRec")
+        EndIf
+        Return
+    EndIf
+
+    SaveCurrentData()
+
+EndFunc
+
+Func _BeginPatchRecordBuffer()
+
+    $gPatchRecordMode = True
+    $gPlaybackRecordInsert = True
+    $gPlaybackRecordResumeIndex = $runPausedIndex
+    $gPlaybackRecordDisplayIndex = 0
+    If $gPlaybackRecordResumeIndex < 1 Then $gPlaybackRecordResumeIndex = $gActiveIndex
+    If $gPlaybackRecordResumeIndex < 1 Then $gPlaybackRecordResumeIndex = 1
+    $gPatchInsertIndex = $gPlaybackRecordResumeIndex
+    $gPatchNewRecordMode = False
+    $gPatchNewRecordUsed = False
+    $gPatchSourceFile = $currentFile
+    $gPatchSourceName = _PatchRecordNameFromPath($gPatchSourceFile)
+    If $gPatchSourceName = "" Then $gPatchSourceName = _CleanRecordName($gLoadedRecordName)
+    If $gPatchSourceName = "" Then $gPatchSourceName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    $gPatchTaskAfterName = $gPatchSourceName
+
+    $gPatchMainLines = $gCurrLines
+    $gPatchMainActiveIndex = $gActiveIndex
+    $gPatchMainLastVisibleText = $gLastVisibleText
+
+    ReDim $gCurrLines[1]
+    $gActiveIndex = 0
+    $gLastVisibleText = ""
+    _RenderCommands(0)
+
+EndFunc
+
+Func _PatchRecordNameFromPath($file)
+
+    $file = StringStripWS($file, 3)
+    If $file = "" Then Return ""
+
+    Local $pos = StringInStr($file, "\", 0, -1)
+    Local $name = $file
+    If $pos > 0 Then $name = StringMid($file, $pos + 1)
+
+    Return _CleanRecordName($name)
+
+EndFunc
+
+Func _BeginManualFlowPatchRecordBuffer()
+
+    $gPatchRecordMode = True
+    $gPlaybackRecordInsert = False
+    $gMFDirectPatchMode = True
+    $gMFDirectPatchResumeIndex = 0
+    $gPatchInsertIndex = $gActiveIndex - 1
+    If $gPatchInsertIndex < 1 Then $gPatchInsertIndex = 1
+    $gPatchNewRecordMode = False
+    $gPatchNewRecordUsed = False
+    $gPatchSourceFile = $currentFile
+    $gPatchSourceName = _PatchRecordNameFromPath($gPatchSourceFile)
+    If $gPatchSourceName = "" Then $gPatchSourceName = _CleanRecordName($gLoadedRecordName)
+    If $gPatchSourceName = "" Then $gPatchSourceName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    $gPatchTaskAfterName = $gPatchSourceName
+
+    $gPatchMainLines = $gCurrLines
+    $gPatchMainActiveIndex = $gActiveIndex
+    $gPatchMainLastVisibleText = $gLastVisibleText
+
+    ReDim $gCurrLines[1]
+    $gActiveIndex = 0
+    $gLastVisibleText = ""
+    _RenderCommands(0)
+
+EndFunc
+
+Func _CreatePatchNewRecordBuffer()
+
+    If Not $gPatchRecordMode Then Return
+    If $gPatchNewRecordUsed Then
+        GUICtrlSetData($status, "OneNewOnly")
+        Return
+    EndIf
+
+    Local $name = _
+        "rec_" & _
+        @YEAR & @MON & @MDAY & "_" & _
+        @HOUR & @MIN & @SEC
+
+    $name = _UniqueRecordName($name)
+
+    $gPatchNewRecordMode = True
+    $gPatchNewRecordUsed = True
+    $currentFile = RecordPath($name)
+    $gLoadedRecordName = $name
+    $gAutoCommentIndex = 1
+    $gAutoCommentBase = _GetCurrentRecordBaseName()
+
+    RefreshFilesWithExtra($name, $name)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($name))
+    If UBound($gCurrLines) <= 1 Then
+        ReDim $gCurrLines[1]
+        $gActiveIndex = 0
+        $gLastVisibleText = ""
+        _RenderCommands(0)
+    Else
+        _RenderCommands($gActiveIndex)
+    EndIf
+
+    GUICtrlSetData($status, "PatchRec")
+
+EndFunc
+
+Func _FinishPatchRecordBuffer()
+
+    If $gPatchNewRecordMode Then
+        SaveCurrentDataNoFlow()
+
+        Local $newName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+        If $newName = "" Then $newName = $gLoadedRecordName
+
+        InsertFlowNameAfter($gPatchTaskAfterName, $newName)
+
+        $currentFile = $gPatchSourceFile
+        $gLoadedRecordName = $gPatchSourceName
+        RefreshFiles($gPatchSourceName)
+        GUICtrlSetData($cmbFiles, $gPatchSourceName)
+        If FileExists($currentFile) Then LoadCommands($currentFile)
+
+        $gPlaybackRecordResumeIndex = $gPatchInsertIndex
+        $gPlaybackRecordDisplayIndex = $gPatchInsertIndex
+        $gPatchRecordMode = False
+        $gPatchNewRecordMode = False
+        $gPatchInsertIndex = 0
+        $gPatchSourceFile = ""
+        $gPatchSourceName = ""
+        $gPatchTaskAfterName = ""
+        $gPatchSavedPrompt = True
+        Return
+    EndIf
+
+    Local $patchLines = $gCurrLines
+
+    $gCurrLines = $gPatchMainLines
+    $gActiveIndex = $gPatchMainActiveIndex
+    $gLastVisibleText = $gPatchMainLastVisibleText
+
+    Local $patchCount = InsertPatchLinesAfter($gPatchInsertIndex, $patchLines)
+    SaveCurrentData()
+
+    $gPatchRecordMode = False
+    $gPlaybackRecordResumeIndex = $gPatchInsertIndex + $patchCount
+    $gPlaybackRecordDisplayIndex = $gPlaybackRecordResumeIndex + 1
+    $gPatchInsertIndex = 0
+    $gPatchNewRecordMode = False
+    $gPatchSourceFile = ""
+    $gPatchSourceName = ""
+    $gPatchTaskAfterName = ""
+    $gPatchSavedPrompt = True
+
+EndFunc
+; =====================================================
+; RESET KEY STATES
+; =====================================================
+
+Func _ResetKeyStates()
+
+    For $i = 1 To $keyTotal
+        $keyDown[$i] = False
+    Next
+
+EndFunc
+
+; =====================================================
+; POLL RECORDER
+; =====================================================
+
+Func PollRecorder()
+
+    If Not $recording Then
+        _HideRecorderTooltip()
+        Return
+    EndIf
+    If $running Then Return
+    If $gRecordPaused Then
+        RecordManualFocusTick()
+        GUICtrlSetData($status, "RecPause")
+        _HideRecorderTooltip()
+        Return
+    EndIf
+
+    If $gRecordManualFocusWait Then
+        RecordManualFocusTick()
+        _HideRecorderTooltip()
+        Return
+    EndIf
+
+    _UpdateRecorderTooltip()
+    PollMouse()
+    PollKeys()
+
+EndFunc
+
+; =====================================================
+; POLL MOUSE
+; Records left / right / middle click.
+; Middle click uses C:
+; M_P1,x,y,C,1,,rem_wheel
+; =====================================================
+
+Func PollMouse()
+
+    Local $leftDown = _IsPressed("01")
+    Local $rightDown = _IsPressed("02")
+    Local $middleDown = _IsPressed("04")
+
+    Local $nowDown = False
+    Local $btn = ""
+
+    If $leftDown Then
+        $nowDown = True
+        $btn = "L"
+    ElseIf $rightDown Then
+        $nowDown = True
+        $btn = "R"
+    ElseIf $middleDown Then
+        $nowDown = True
+        $btn = "C"
+    EndIf
+
+    If $nowDown And Not $mouseWasDown Then
+
+        Local $downPos = MouseGetPos()
+
+        $mouseButton = $btn
+        $mouseDownInUI = _MouseInsideRecorderUI()
+        $mouseDownX = $downPos[0]
+        $mouseDownY = $downPos[1]
+        $mouseDownTimer = TimerInit()
+        $mouseLongPressActive = False
+        $mouseWasDown = True
+
+        Return
+
+    EndIf
+
+    If $nowDown And $mouseWasDown And Not $mouseDownInUI And Not $mouseLongPressActive Then
+
+        Local $holdSec = Number(IniRead($iniFile, "Record", "mouse_down_hold_sec", "1"))
+        If $holdSec < 0.1 Then $holdSec = 1
+
+        If TimerDiff($mouseDownTimer) >= ($holdSec * 1000) Then
+            Local $holdPos = MouseGetPos()
+            Local $holdDragPx = Number(IniRead($iniFile, "Record", "drag_px", "5"))
+            If $holdDragPx < 1 Then $holdDragPx = 5
+
+            If Abs($holdPos[0] - $mouseDownX) <= $holdDragPx _
+                And Abs($holdPos[1] - $mouseDownY) <= $holdDragPx Then
+
+                _RecordMouseDown($mouseDownX, $mouseDownY, $mouseButton)
+                $mouseLongPressActive = True
+            EndIf
+        EndIf
+
+        Return
+
+    EndIf
+
+    If Not $nowDown And $mouseWasDown Then
+
+        If $mouseLongPressActive Then
+
+            Local $upLongPos = MouseGetPos()
+            Local $holdDelay = Round(TimerDiff($mouseDownTimer) / 1000, 2)
+            _UpdateMouseDownDelay($holdDelay)
+            _RecordMouseUp($upLongPos[0], $upLongPos[1], $mouseButton)
+
+        ElseIf Not $mouseDownInUI And Not _MouseInsideRecorderUI() Then
+
+            Local $upPos = MouseGetPos()
+            Local $dragPx = Number(IniRead($iniFile, "Record", "drag_px", "5"))
+            If $dragPx < 1 Then $dragPx = 5
+
+            If (Abs($upPos[0] - $mouseDownX) > $dragPx _
+                Or Abs($upPos[1] - $mouseDownY) > $dragPx) Then
+
+                _RecordMouseDrag($mouseDownX, $mouseDownY, $upPos[0], $upPos[1], $mouseButton)
+            Else
+                _RecordMouseClick($mouseDownX, $mouseDownY, $mouseButton)
+            EndIf
+
+        EndIf
+
+        $mouseWasDown = False
+        $mouseButton = ""
+        $mouseDownInUI = False
+        $mouseDownX = 0
+        $mouseDownY = 0
+        $mouseLongPressActive = False
+
+        Return
+
+    EndIf
+
+EndFunc
+
+; =====================================================
+; POLL KEYBOARD
+; Records key-down events once.
+; UI typing is ignored.
+; String text should use the configured string_toggle hotkey.
+; =====================================================
+
+Func PollKeys()
+
+    If WinActive($gui) Then Return
+    If $gReviewGui <> 0 And WinActive($gReviewGui) Then Return
+
+    Local $ctrl = _IsPressed("11")
+    Local $alt = _IsPressed("12")
+    Local $shift = _IsPressed("10")
+    Local $win = _IsPressed("5B") Or _IsPressed("5C")
+
+    For $i = 1 To $keyTotal
+
+        Local $down = _IsPressed($keyCode[$i])
+
+        If $down And Not $keyDown[$i] Then
+
+            Local $sendKey = _BuildAutoItKey($keyName[$i], $ctrl, $alt, $shift, $win)
+
+            If Not _IsRecorderControlKey($sendKey) Then
+
+                If $gStringMode Then
+                    If _CanBufferStringKey($sendKey) Then
+                        _BufferStringKey($sendKey)
+                    Else
+                        _CommitStringMode()
+                        _RecordButtonKey($sendKey)
+                    EndIf
+                Else
+                    _RecordButtonKey($sendKey)
+                EndIf
+
+            EndIf
+
+            $keyDown[$i] = True
+
+        ElseIf Not $down And $keyDown[$i] Then
+
+            $keyDown[$i] = False
+
+        EndIf
+
+    Next
+
+EndFunc
+
+Func _RecordButtonKey($sendKey)
+
+    $keyCount += 1
+
+    Local $gap = TimerDiff($gLastKeyTimer) / 1000
+    $gLastKeyTimer = TimerInit()
+
+    Local $line = _
+        "K_B" & _
+        $keyCount & "," & _
+        $sendKey & _
+        ",1," & _
+        _FormatSeconds($gap) & _
+        ",rem_key"
+
+    AppendCommand($line)
+
+EndFunc
+
+Func _FormatSeconds($seconds)
+
+    If $seconds < 0 Then $seconds = 0
+    If $seconds > 999 Then $seconds = 999
+
+    Return StringFormat("%.2f", $seconds)
+
+EndFunc
+
+Func _BufferStringKey($sendKey)
+
+    Switch $sendKey
+        Case "{BACKSPACE}"
+            If StringLen($gStringBuffer) > 0 Then
+                $gStringBuffer = StringTrimRight($gStringBuffer, 1)
+            EndIf
+            Return
+        Case "{SPACE}"
+            $gStringBuffer &= " "
+            Return
+        Case "{ASC 034}"
+            $gStringBuffer &= '"'
+            Return
+        Case "{ASC 044}"
+            $gStringBuffer &= ","
+            Return
+        Case "{+}"
+            $gStringBuffer &= "+"
+            Return
+        Case "{#}"
+            $gStringBuffer &= "#"
+            Return
+        Case "{^}"
+            $gStringBuffer &= "^"
+            Return
+    EndSwitch
+
+    If StringLen($sendKey) = 1 Then
+        $gStringBuffer &= $sendKey
+    EndIf
+
+EndFunc
+
+Func _CanBufferStringKey($sendKey)
+
+    Switch $sendKey
+        Case "{BACKSPACE}", "{SPACE}", "{ASC 034}", "{ASC 044}", "{+}", "{#}", "{^}"
+            Return True
+    EndSwitch
+
+    If StringLen($sendKey) = 1 Then Return True
+
+    Return False
+
+EndFunc
+
+; =====================================================
+; BUILD AUTOIT SEND GRAMMAR
+;
+; c          -> c
+; Ctrl+c     -> ^c
+; Alt+c      -> !c
+; Ctrl+Alt+i -> ^!i
+; Win+Left   -> #{LEFT}
+; Shift+Tab  -> +{TAB}
+; Shift+.    -> +.
+; Shift+/    -> +/
+; Shift+=    -> +=
+; =====================================================
+
+Func _BuildAutoItKey($key, $ctrl, $alt, $shift, $win)
+
+    ; =====================================================
+    ; Rule:
+    ; 1. If Ctrl / Alt / Win is pressed, keep AutoIt modifier grammar.
+    ;    Example: Ctrl+C -> ^c
+    ;
+    ; 2. If ONLY Shift is pressed and it creates a visible character,
+    ;    record the actual visible character.
+    ;    Example: Shift+/ -> ?
+    ;
+    ; 3. Some literal characters must be escaped because AutoIt Send()
+    ;    treats them specially or our comma-separated command format
+    ;    would break.
+    ; =====================================================
+
+    If $shift And Not $ctrl And Not $alt And Not $win Then
+
+        ; A-Z
+        If StringLen($key) = 1 Then
+
+            Local $asc = Asc($key)
+
+            If $asc >= Asc("a") And $asc <= Asc("z") Then
+                Return StringUpper($key)
+            EndIf
+
+        EndIf
+
+        ; US keyboard shifted symbols
+        Switch $key
+
+            Case "1"
+                Return "!"
+
+            Case "2"
+                Return "@"
+
+            Case "3"
+                Return "{#}"
+
+            Case "4"
+                Return "$"
+
+            Case "5"
+                Return "%"
+
+            Case "6"
+                Return "{^}"
+
+            Case "7"
+                Return "&"
+
+            Case "8"
+                Return "*"
+
+            Case "9"
+                Return "("
+
+            Case "0"
+                Return ")"
+
+            Case "-"
+                Return "_"
+
+            Case "="
+                Return "{+}"
+
+            Case "["
+                Return "{"
+
+            Case "]"
+                Return "}"
+
+            Case "\"
+                Return "|"
+
+            Case ";"
+                Return ":"
+
+            Case "'"
+                Return "{ASC 034}" ; double quote
+
+            Case ","
+                Return "<"
+
+            Case "."
+                Return ">"
+
+            Case "/"
+                Return "?"
+
+            Case "`"
+                Return "~"
+
+        EndSwitch
+
+    EndIf
+
+    ; =====================================================
+    ; Literal non-shift comma must not break CSV command format
+    ; =====================================================
+
+    If Not $ctrl And Not $alt And Not $shift And Not $win Then
+
+        Switch $key
+
+            Case ","
+                Return "{ASC 044}"
+
+            Case "+"
+                Return "{+}"
+
+            Case "^"
+                Return "{^}"
+
+            Case "#"
+                Return "{#}"
+
+        EndSwitch
+
+    EndIf
+
+    ; =====================================================
+    ; Real hotkey / modifier case
+    ; =====================================================
+
+    Local $prefix = ""
+
+    If $ctrl Then $prefix &= "^"
+    If $alt Then $prefix &= "!"
+    If $shift Then $prefix &= "+"
+    If $win Then $prefix &= "#"
+
+    Return $prefix & $key
+
+EndFunc
+
+; =====================================================
+; AVOID RECORDING RECORDER CONTROL HOTKEYS
+; =====================================================
+
+Func _IsRecorderControlKey($sendKey)
+
+    If _MatchesConfiguredHotkey($sendKey, "emergency_stop", "+{F9}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "record_off", "!{F9}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "playback_pause", "{F9}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "manual_focus_resume", "^{F9}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "start_stop", "") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_active", "{F6}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_active_next", "+{F6}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "active_line_prev", "{F5}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "active_line_next", "{F7}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "file_prev", "!{F5}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "file_next", "!{F7}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_current_file", "!{F6}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_1", "^!1") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_2", "^!2") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_3", "^!3") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_4", "^!4") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_5", "^!5") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_6", "^!6") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_7", "^!7") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_8", "^!8") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_9", "^!9") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "run_file_0", "^!0") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "string_toggle", "^+t") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "offset_toggle", "{F8}") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "tooltip_toggle", "^+y") Then Return True
+    If _MatchesConfiguredHotkey($sendKey, "mouse_move", "+{F8}") Then Return True
+
+    Return False
+
+EndFunc
+
+Func _MatchesConfiguredHotkey($sendKey, $keyName, $default)
+
+    Local $hotkey = StringStripWS(IniRead($iniFile, "Hotkeys", $keyName, $default), 3)
+    If $hotkey = "" Then Return False
+
+    Return StringLower($sendKey) = StringLower($hotkey)
+
+EndFunc
+
+; =====================================================
+; RECORD MOUSE DRAG
+; =====================================================
+
+Func _RecordMouseDrag($x1, $y1, $x2, $y2, $btn)
+
+    If $gStringMode Then _CommitStringMode()
+
+    AppendCommand("MD_D1," & $x1 & "~" & $x2 & "," & $y1 & "~" & $y2 & "," & $btn & ",10,,rem_drag")
+
+    If _AutoCommentEnabled() Then
+        _ApplyAutoCommentToActiveDragLine($x1, $y1, $x2, $y2)
+    EndIf
+
+EndFunc
+
+; =====================================================
+; RECORD MANUAL MOUSE MOVE / HOVER
+; Shift+F8 by default. This is intentional, not automatic,
+; so normal recording does not collect noisy hover points.
+; =====================================================
+
+Func RecordMouseMoveHotkey()
+
+    If Not $recording Then Return
+    If $gRecordPaused Then Return
+
+    If $gStringMode Then _CommitStringMode()
+
+    Local $m = MouseGetPos()
+    AppendCommand("MM_M1," & $m[0] & "," & $m[1] & ",0,1,,rem_move")
+
+    If _AutoCommentEnabled() Then
+        _ApplyAutoCommentToActiveMouseLine($m[0], $m[1])
+    EndIf
+
+EndFunc
+
+Func ToggleOffsetMouseMarkerHotkey()
+
+    If Not $recording Then Return
+    If $gRecordPaused Then Return
+    If $gStringMode Then _CommitStringMode()
+
+    Local $m = MouseGetPos()
+
+    If Not $offsetMode Then
+        $offsetMode = True
+        $offsetBaseSet = False
+        $offsetBaseX = 0
+        $offsetBaseY = 0
+        $offsetCount = 0
+        $offsetGroup += 1
+        $offsetF8StartX = $m[0]
+        $offsetF8StartY = $m[1]
+        $offsetAnchorRegionSet = False
+        $offsetAnchorSet = False
+
+        AppendCommandToEnd(";= Offset Start " & $offsetGroup)
+        $offsetF8StartIndex = $gActiveIndex
+
+        GUICtrlSetData($status, "OffsetOn")
+        Return
+    EndIf
+
+    If Not $offsetAnchorRegionSet Then
+        _RecordAnchorRegionCommand($offsetF8StartX, $offsetF8StartY, $m[0], $m[1])
+        $offsetAnchorRegionSet = True
+        If _AutoCommentEnabled() Then _ApplyAutoCommentToActiveMouseLineRegion($offsetF8StartX, $offsetF8StartY, $m[0], $m[1])
+        GUICtrlSetData($status, "OffsetOn")
+        Return
+    EndIf
+
+    AppendCommandToEnd(";= Offset End " & $offsetGroup)
+
+    $offsetMode = False
+    $offsetBaseSet = False
+    $offsetCount = 1
+    $offsetF8StartIndex = 0
+    $offsetAnchorRegionSet = False
+    $offsetAnchorSet = False
+
+    GUICtrlSetData($status, "Recording")
+
+EndFunc
+
+Func _RecordAnchorRegionCommand($x1, $y1, $x2, $y2)
+
+    Local $line = "Anchor_" & $offsetGroup & "," & $x1 & "~" & $x2 & "," & $y1 & "~" & $y2 & ",,1,,rem_anchor_region"
+
+    If Not $offsetAnchorSet Then
+        AppendCommandToEnd($line)
+        Return
+    EndIf
+
+    Local $insertAfter = 0
+    For $i = UBound($gCurrLines) - 1 To 1 Step -1
+        If StringStripWS($gCurrLines[$i], 3) = ";= Offset Start " & $offsetGroup Then
+            $insertAfter = $i
+            ExitLoop
+        EndIf
+    Next
+
+    If $insertAfter < 1 Then
+        AppendCommandToEnd($line)
+        Return
+    EndIf
+
+    Local $total = UBound($gCurrLines) - 1
+    Local $new[1]
+    Local $count = 0
+    Local $insertIndex = $insertAfter + 1
+
+    For $i = 1 To $total
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $gCurrLines[$i]
+
+        If $i = $insertAfter Then
+            $count += 1
+            ReDim $new[$count + 1]
+            $new[$count] = $line
+        EndIf
+    Next
+
+    $gCurrLines = $new
+    $gActiveIndex = $insertIndex
+    $gLastVisibleText = $line
+    _RenderCommands($insertIndex)
+
+EndFunc
+
+; =====================================================
+; RECORD MOUSE CLICK
+; =====================================================
+
+Func _RecordMouseClick($x, $y, $btn)
+
+    If $gStringMode Then _CommitStringMode()
+
+    Local $line = ""
+
+    If $offsetMode Then
+
+        If Not $offsetAnchorSet Then
+
+            $offsetBaseX = $x
+            $offsetBaseY = $y
+            $offsetBaseSet = True
+            $offsetAnchorSet = True
+            $offsetCount = 1
+
+            $line = _
+                "MSP_" & _
+                $offsetGroup & _
+                "_1," & _
+                $offsetBaseX & "," & _
+                $offsetBaseY & "," & _
+                $btn & ",1,,rem_idx_anchor"
+
+        Else
+
+            $offsetCount += 1
+
+            Local $dx = $x - $offsetBaseX
+            Local $dy = $y - $offsetBaseY
+
+            $line = _
+                "MSP_" & _
+                $offsetGroup & _
+                "_" & _
+                $offsetCount & "," & _
+                $dx & "," & _
+                $dy & "," & _
+                $btn & ",1,,rem_offset"
+
+        EndIf
+
+    Else
+
+        Local $rem = "rem_mouse"
+
+        If $btn = "C" Then
+            $rem = "rem_wheel"
+        EndIf
+
+        $line = _
+            "M_P1," & _
+            $x & "," & _
+            $y & "," & _
+            $btn & ",1,," & _
+            $rem
+
+    EndIf
+
+    ; 1) create command line first
+    AppendCommand($line)
+
+    ; 2) then update rem field and crop image.
+    ; This avoids any later UI/tooltips blocking the screenshot.
+    If _AutoCommentEnabled() Then
+        _ApplyAutoCommentToActiveMouseLine($x, $y)
+    EndIf
+
+EndFunc
+
+Func _RecordMouseDown($x, $y, $btn)
+
+    If $gStringMode Then _CommitStringMode()
+
+    AppendCommand("M_D1," & $x & "," & $y & "," & $btn & ",1,,rem_down")
+
+    If _AutoCommentEnabled() Then
+        _ApplyAutoCommentToActiveMouseLine($x, $y)
+    EndIf
+
+EndFunc
+
+Func _UpdateMouseDownDelay($seconds)
+
+    If $gActiveIndex < 1 Then Return
+    If $gActiveIndex > UBound($gCurrLines) - 1 Then Return
+
+    Local $line = $gCurrLines[$gActiveIndex]
+    Local $p = StringSplit($line, ",")
+    If $p[0] < 7 Then Return
+    If StringLeft($p[1], 3) <> "M_D" Then Return
+
+    $gCurrLines[$gActiveIndex] = $p[1] & "," & $p[2] & "," & $p[3] & "," & $p[4] & "," & $p[5] & "," & $seconds & "," & $p[7]
+    $gLastVisibleText = $gCurrLines[$gActiveIndex]
+    _RenderCommands($gActiveIndex)
+
+EndFunc
+
+Func _RecordMouseUp($x, $y, $btn)
+
+    If $gStringMode Then _CommitStringMode()
+
+    AppendCommand("M_U1," & $x & "," & $y & "," & $btn & ",1,,rem_up")
+
+EndFunc
+; =====================================================
+; AUTO COMMENT ENABLED?
+; During recording, the Auto checkbox is reused as Auto Comment.
+; Checked = crop image and write rem_index
+; Unchecked = normal rem_mouse / rem_offset
+; =====================================================
+
+Func _AutoCommentEnabled()
+
+    If Not $recording Then Return False
+
+    If GUICtrlRead($chkRepeat) = $GUI_CHECKED Then
+        Return True
+    EndIf
+
+    Return False
+
+EndFunc
+
+; =====================================================
+; GET CURRENT RECORD FILE BASE NAME
+; Example:
+; C:\...\rec_20260520_123456.rec
+; -> rec_20260520_123456
+; =====================================================
+
+Func _GetCurrentRecordBaseName()
+
+    Local $name = $currentFile
+
+    Local $p = StringInStr($name, "\", 0, -1)
+
+    If $p > 0 Then
+        $name = StringTrimLeft($name, $p)
+    EndIf
+
+    If StringRight($name, 4) = ".rec" Then
+        $name = StringTrimRight($name, 4)
+    EndIf
+
+    Return $name
+
+EndFunc
+
+; =====================================================
+; APPLY AUTO COMMENT TO CURRENT ACTIVE MOUSE LINE
+;
+; TEMP DEBUG LABEL FORMAT:
+; recFileBase_0001_yymmdd_hhmm_left_top_right_bottom
+;
+; Example:
+; rem_rec_20260520_153800_0001_260520_1542_490_280_509_319
+;
+; This is temporary for checking crop window.
+; After crop verified, we can return to:
+; rem_rec_20260520_153800_0001
+; =====================================================
+
+Func _ApplyAutoCommentToActiveMouseLine($x, $y)
+
+    If $gActiveIndex < 1 Then Return
+    If $gActiveIndex > UBound($gCurrLines) - 1 Then Return
+
+    Local $line = $gCurrLines[$gActiveIndex]
+    Local $p = StringSplit($line, ",")
+
+    If $p[0] < 4 Then Return
+
+    ; only apply to mouse-related commands
+    If StringLeft($p[1], 2) <> "M_" And StringLeft($p[1], 4) <> "MSP_" And StringLeft($p[1], 4) <> "MSM_" And StringLeft($p[1], 3) <> "MM_" Then Return
+
+    ; calculate exact crop rectangle first
+    Local $rect = _GetMouseCropRect($x, $y)
+
+    Local $left = $rect[0]
+    Local $top = $rect[1]
+    Local $right = $rect[2]
+    Local $bottom = $rect[3]
+
+    ; order number
+    Local $order = StringFormat("%04i", $gAutoCommentIndex)
+    $gAutoCommentIndex += 1
+
+    Local $label = _BuildIndexCropLabel($order, $x, $y, $left, $top, $right, $bottom)
+
+    Local $newLine = _ReplaceRemField($line, "rem_" & $label)
+
+    $gCurrLines[$gActiveIndex] = $newLine
+    $gLastVisibleText = $newLine
+
+    _RenderCommands($gActiveIndex)
+
+    Local $file = $appPath & "\index\" & $label & ".png"
+
+    _HideRecorderTooltip()
+    Sleep(20)
+    _CaptureCropRect($file, $left, $top, $right, $bottom)
+    Review_ShowLatestIndex($file)
+
+EndFunc
+
+Func _ApplyAutoCommentToActiveMouseLineRegion($x1, $y1, $x2, $y2)
+
+    If $gActiveIndex < 1 Then Return
+    If $gActiveIndex > UBound($gCurrLines) - 1 Then Return
+
+    Local $line = $gCurrLines[$gActiveIndex]
+    Local $p = StringSplit($line, ",")
+
+    If $p[0] < 4 Then Return
+    If StringLeft($p[1], 4) <> "MSM_" And StringLeft($p[1], 7) <> "Anchor_" Then Return
+
+    Local $rect = _GetDragCropRect($x1, $y1, $x2, $y2)
+
+    Local $left = $rect[0]
+    Local $top = $rect[1]
+    Local $right = $rect[2]
+    Local $bottom = $rect[3]
+
+    Local $order = StringFormat("%04i", $gAutoCommentIndex)
+    $gAutoCommentIndex += 1
+
+    Local $label = _BuildIndexCropLabel($order, $x1, $y1, $left, $top, $right, $bottom)
+    Local $newLine = _ReplaceRemField($line, "rem_" & $label)
+
+    $gCurrLines[$gActiveIndex] = $newLine
+    $gLastVisibleText = $newLine
+
+    _RenderCommands($gActiveIndex)
+
+    Local $file = $appPath & "\index\" & $label & ".png"
+
+    _HideRecorderTooltip()
+    Sleep(20)
+    _CaptureCropRect($file, $left, $top, $right, $bottom)
+    Review_ShowLatestIndex($file)
+
+EndFunc
+
+; =====================================================
+; APPLY AUTO COMMENT TO CURRENT ACTIVE DRAG LINE
+;
+; Drag auto comment creates:
+; index\label.png  = small passive crop at drag top-right corner
+; export\label.png = active crop of the dragged screen area
+; =====================================================
+
+Func _ApplyAutoCommentToActiveDragLine($x1, $y1, $x2, $y2)
+
+    If $gActiveIndex < 1 Then Return
+    If $gActiveIndex > UBound($gCurrLines) - 1 Then Return
+
+    Local $line = $gCurrLines[$gActiveIndex]
+    Local $p = StringSplit($line, ",")
+
+    If $p[0] < 4 Then Return
+    If StringLeft($p[1], 3) <> "MD_" Then Return
+
+    Local $dragRect = _GetDragCropRect($x1, $y1, $x2, $y2)
+
+    Local $dragLeft = $dragRect[0]
+    Local $dragTop = $dragRect[1]
+    Local $dragRight = $dragRect[2]
+    Local $dragBottom = $dragRect[3]
+
+    Local $cornerRect = _GetMouseCropRect($dragRight, $dragTop)
+
+    Local $left = $cornerRect[0]
+    Local $top = $cornerRect[1]
+    Local $right = $cornerRect[2]
+    Local $bottom = $cornerRect[3]
+
+    Local $order = StringFormat("%04i", $gAutoCommentIndex)
+    $gAutoCommentIndex += 1
+
+    Local $label = _BuildIndexCropLabel($order, $x1, $y1, $left, $top, $right, $bottom)
+
+    Local $newLine = _ReplaceRemField($line, "rem_" & $label)
+
+    $gCurrLines[$gActiveIndex] = $newLine
+    $gLastVisibleText = $newLine
+
+    _RenderCommands($gActiveIndex)
+
+    Local $indexFile = $appPath & "\index\" & $label & ".png"
+    Local $exportFile = $appPath & "\export\" & $label & ".png"
+
+    _HideRecorderTooltip()
+    Sleep(20)
+    _CaptureCropRect($indexFile, $left, $top, $right, $bottom)
+    _CaptureCropRect($exportFile, $dragLeft, $dragTop, $dragRight, $dragBottom)
+    Review_ShowLatestIndex($indexFile)
+
+EndFunc
+
+Func _BuildIndexCropLabel($order, $anchorX, $anchorY, $left, $top, $right, $bottom)
+
+    Local $dx1 = $left - $anchorX
+    Local $dx2 = $right - $anchorX
+    Local $dy1 = $top - $anchorY
+    Local $dy2 = $bottom - $anchorY
+
+    Return _
+        "idx_" & _
+        StringRight(@YEAR, 2) & _
+        @MON & _
+        @MDAY & _
+        "_" & _
+        @HOUR & _
+        @MIN & _
+        @SEC & _
+        "_" & _
+        $order & _
+        "_x" & _
+        $dx1 & _
+        "~" & _
+        $dx2 & _
+        "_y" & _
+        $dy1 & _
+        "~" & _
+        $dy2
+
+EndFunc
+
+; =====================================================
+; TOOLTIP TOGGLE
+; Ctrl+Shift+Y by default.
+; Tooltip text format: x, y, decimalColor
+; Example: 1474, 746, 131232
+; =====================================================
+
+Func ToggleTooltipDisplay()
+
+    If Not $recording Then Return
+
+    $gTooltipEnabled = Not $gTooltipEnabled
+
+    If Not $gTooltipEnabled Then
+        _HideRecorderTooltip()
+    Else
+        $gTooltipLastTimer = TimerInit()
+        _UpdateRecorderTooltip(True)
+    EndIf
+
+EndFunc
+
+Func _UpdateRecorderTooltip($force = False)
+
+    If Not $recording Then
+        _HideRecorderTooltip()
+        Return
+    EndIf
+
+    If Not $gTooltipEnabled Then
+        _HideRecorderTooltip()
+        Return
+    EndIf
+
+    If WinActive($gui) Or ($gReviewGui <> 0 And WinActive($gReviewGui)) Then
+        _HideRecorderTooltip()
+        Return
+    EndIf
+
+    Local $interval = Number(IniRead($iniFile, "Record", "tooltip_interval_ms", "100"))
+    If $interval < 10 Then $interval = 100
+
+    If Not $force And TimerDiff($gTooltipLastTimer) < $interval Then Return
+
+    Local $m = MouseGetPos()
+    Local $colorEnabled = (IniRead($iniFile, "Record", "tooltip_color_enabled", "1") = "1")
+    Local $text = $m[0] & ", " & $m[1]
+
+    If $colorEnabled Then
+        $text &= ", " & PixelGetColor($m[0], $m[1])
+    EndIf
+
+    Local $tx = $m[0] + 15
+    Local $ty = $m[1] + 15
+
+    If $tx > @DesktopWidth - 160 Then $tx = $m[0] - 160
+    If $ty > @DesktopHeight - 40 Then $ty = $m[1] - 40
+    If $tx < 0 Then $tx = 0
+    If $ty < 0 Then $ty = 0
+
+    ToolTip($text, $tx, $ty)
+    $gTooltipVisible = True
+    $gTooltipLastTimer = TimerInit()
+
+EndFunc
+
+Func _HideRecorderTooltip()
+
+    If Not $gTooltipVisible Then Return
+
+    ToolTip("")
+    $gTooltipVisible = False
+
+EndFunc
+
+; =====================================================
+; GET CROP RECTANGLE AROUND CLICK POSITION
+;
+; Center target = click position x,y
+; If near screen edge, rectangle shifts inside screen.
+;
+; INI:
+; [AutoComment]
+; crop_w=20
+; crop_h=40
+; =====================================================
+
+Func _GetMouseCropRect($x, $y)
+
+    Local $w = Number(IniRead($iniFile, "AutoComment", "crop_w", "20"))
+    Local $h = Number(IniRead($iniFile, "AutoComment", "crop_h", "40"))
+
+    If $w < 2 Then $w = 20
+    If $h < 2 Then $h = 40
+
+    Local $left = $x - Int($w / 2)
+    Local $top = $y - Int($h / 2)
+
+    If $left < 0 Then $left = 0
+    If $top < 0 Then $top = 0
+
+    If $left + $w > @DesktopWidth Then
+        $left = @DesktopWidth - $w
+    EndIf
+
+    If $top + $h > @DesktopHeight Then
+        $top = @DesktopHeight - $h
+    EndIf
+
+    If $left < 0 Then $left = 0
+    If $top < 0 Then $top = 0
+
+    Local $right = $left + $w - 1
+    Local $bottom = $top + $h - 1
+
+    Local $rect[4]
+
+    $rect[0] = $left
+    $rect[1] = $top
+    $rect[2] = $right
+    $rect[3] = $bottom
+
+    Return $rect
+
+EndFunc
+
+Func _GetDragCropRect($x1, $y1, $x2, $y2)
+
+    Local $left = $x1
+    Local $right = $x2
+    If $left > $right Then
+        $left = $x2
+        $right = $x1
+    EndIf
+
+    Local $top = $y1
+    Local $bottom = $y2
+    If $top > $bottom Then
+        $top = $y2
+        $bottom = $y1
+    EndIf
+
+    Local $minW = Number(IniRead($iniFile, "AutoComment", "crop_w", "20"))
+    Local $minH = Number(IniRead($iniFile, "AutoComment", "crop_h", "40"))
+
+    If $minW < 2 Then $minW = 20
+    If $minH < 2 Then $minH = 40
+
+    Local $w = $right - $left + 1
+    Local $h = $bottom - $top + 1
+
+    If $w < $minW Then
+        Local $centerX = Int(($left + $right) / 2)
+        $left = $centerX - Int($minW / 2)
+        $right = $left + $minW - 1
+    EndIf
+
+    If $h < $minH Then
+        Local $centerY = Int(($top + $bottom) / 2)
+        $top = $centerY - Int($minH / 2)
+        $bottom = $top + $minH - 1
+    EndIf
+
+    If $left < 0 Then
+        $right -= $left
+        $left = 0
+    EndIf
+
+    If $top < 0 Then
+        $bottom -= $top
+        $top = 0
+    EndIf
+
+    If $right >= @DesktopWidth Then
+        Local $shiftX = $right - @DesktopWidth + 1
+        $left -= $shiftX
+        $right -= $shiftX
+    EndIf
+
+    If $bottom >= @DesktopHeight Then
+        Local $shiftY = $bottom - @DesktopHeight + 1
+        $top -= $shiftY
+        $bottom -= $shiftY
+    EndIf
+
+    If $left < 0 Then $left = 0
+    If $top < 0 Then $top = 0
+    If $right >= @DesktopWidth Then $right = @DesktopWidth - 1
+    If $bottom >= @DesktopHeight Then $bottom = @DesktopHeight - 1
+
+    Local $rect[4]
+
+    $rect[0] = $left
+    $rect[1] = $top
+    $rect[2] = $right
+    $rect[3] = $bottom
+
+    Return $rect
+
+EndFunc
+
+; =====================================================
+; CAPTURE EXACT RECTANGLE
+; =====================================================
+
+Func _CaptureCropRect($file, $left, $top, $right, $bottom)
+
+    _ScreenCapture_Capture($file, $left, $top, $right, $bottom, False)
+
+EndFunc
+
+; =====================================================
+; REPLACE REM FIELD
+; Expected mouse format:
+; M_P1,x,y,L,1,,rem_mouse
+;
+; Expected offset mouse format:
+; MSP_1_1,x,y,L,1,,rem_offset_base
+;
+; It preserves all fields before the rem field.
+; =====================================================
+
+Func _ReplaceRemField($line, $newRem)
+
+    Local $p = StringSplit($line, ",")
+
+    If $p[0] < 1 Then Return $line
+
+    Local $out = ""
+
+    ; If line has at least 7 fields, replace field 7.
+    If $p[0] >= 7 Then
+
+        For $i = 1 To 6
+
+            If $i = 1 Then
+                $out = $p[$i]
+            Else
+                $out &= "," & $p[$i]
+            EndIf
+
+        Next
+
+        $out &= "," & $newRem
+
+        Return $out
+
+    EndIf
+
+    ; fallback for short mouse lines
+    For $i = 1 To $p[0]
+
+        If $i = 1 Then
+            $out = $p[$i]
+        Else
+            $out &= "," & $p[$i]
+        EndIf
+
+    Next
+
+    While $p[0] < 6
+        $out &= ","
+        $p[0] += 1
+    WEnd
+
+    $out &= "," & $newRem
+
+    Return $out
+
+EndFunc
+
+; =====================================================
+; CAPTURE SCREEN CROP AROUND MOUSE POSITION
+;
+; INI:
+; [AutoComment]
+; crop_w=20
+; crop_h=40
+;
+; If near screen edge, shift rectangle back inside screen.
+; =====================================================
+
+Func _CaptureMouseCrop($x, $y, $file)
+
+    Local $w = Number(IniRead($iniFile, "AutoComment", "crop_w", "20"))
+    Local $h = Number(IniRead($iniFile, "AutoComment", "crop_h", "40"))
+
+    If $w < 2 Then $w = 20
+    If $h < 2 Then $h = 40
+
+    Local $left = $x - Int($w / 2)
+    Local $top = $y - Int($h / 2)
+
+    If $left < 0 Then $left = 0
+    If $top < 0 Then $top = 0
+
+    If $left + $w > @DesktopWidth Then
+        $left = @DesktopWidth - $w
+    EndIf
+
+    If $top + $h > @DesktopHeight Then
+        $top = @DesktopHeight - $h
+    EndIf
+
+    If $left < 0 Then $left = 0
+    If $top < 0 Then $top = 0
+
+    Local $right = $left + $w - 1
+    Local $bottom = $top + $h - 1
+
+    _ScreenCapture_Capture($file, $left, $top, $right, $bottom, False)
+
+EndFunc
+
+; =====================================================
+; RECORD MOUSE WHEEL WITH ROTATION COUNT
+; Consecutive same-direction wheel events update the last line.
+; =====================================================
+
+Func _RecordWheel($dir)
+
+    If $gStringMode Then _CommitStringMode()
+
+    If _TryMergeWheel($dir) Then Return
+
+    Local $line = _
+        "MW_W1," & _
+        $dir & _
+        ",1,,rem_wheel"
+
+    AppendCommand($line)
+
+EndFunc
+
+; =====================================================
+; TRY MERGE WHEEL WITH LAST LINE
+; =====================================================
+
+Func _TryMergeWheel($dir)
+
+    Local $nLast = UBound($gCurrLines) - 1
+
+    If $nLast < 1 Then Return False
+
+    Local $last = StringStripWS($gCurrLines[$nLast], 3)
+
+    If StringLeft($last, 3) <> "MW_" Then Return False
+
+    Local $p = StringSplit($last, ",")
+
+    If $p[0] < 3 Then Return False
+    If $p[2] <> $dir Then Return False
+
+    Local $repeat = Number($p[3])
+
+    If $repeat < 1 Then $repeat = 1
+
+    $repeat += 1
+
+    $gCurrLines[$nLast] = _
+        $p[1] & "," & _
+        $dir & "," & _
+        $repeat & ",,rem_wheel"
+
+    $gActiveIndex = $nLast
+    $gLastVisibleText = $gCurrLines[$nLast]
+
+    _RenderCommands($nLast)
+
+    Return True
+
+EndFunc
+
+; =====================================================
+; STRING INPUT HOTKEY
+; Configured by [Hotkeys] string_toggle.
+; =====================================================
+
+Func ToggleStringRecord()
+
+    If Not $recording Then Return
+
+    If Not $gStringMode Then
+        $gStringMode = True
+        $gStringBuffer = ""
+        _ResetKeyStates()
+        GUICtrlSetData($status, "StringOn")
+        Return
+    EndIf
+
+    _CommitStringMode()
+
+EndFunc
+
+Func TogglePauseRecord()
+
+    If Not $recording Then Return
+
+    If Not $gRecordPaused Then
+        If $gStringMode Then _CommitStringMode()
+
+        AppendCommand('P_P1,"",1,,rem_pause')
+
+        $gRecordPaused = True
+        $gRecordPauseIndex = $gActiveIndex
+        $gRecordPauseTimer = TimerInit()
+        $mouseWasDown = False
+        $mouseButton = ""
+        $mouseDownInUI = False
+        _ResetKeyStates()
+        _HideRecorderTooltip()
+        GUICtrlSetData($status, "RecPause")
+        Return
+    EndIf
+
+    $gRecordPaused = False
+    _UpdatePauseDelayFromRecordTimer()
+    $gRecordPauseIndex = 0
+    $mouseWasDown = False
+    $mouseButton = ""
+    $mouseDownInUI = False
+    _ResetKeyStates()
+    $gTooltipLastTimer = TimerInit()
+
+    If $offsetMode Then
+        GUICtrlSetData($status, "OffsetOn")
+    Else
+        GUICtrlSetData($status, "Recording")
+    EndIf
+
+EndFunc
+
+Func _RecorderSetFocusPauseLine($line)
+
+    Local $trim = StringStripWS($line, 3)
+    If StringLeft($trim, 4) = "P_F1" Then Return $line
+    If StringLeft($trim, 3) = "P_F" Then Return $line
+
+    Local $comma = StringInStr($line, ",")
+    If $comma > 0 Then Return "P_F1" & StringMid($line, $comma)
+
+    Return 'P_F1,"",1,,rem_focus_pause'
+
+EndFunc
+
+Func RecordManualFocusResume()
+
+    If Not $recording Then Return
+    If Not $gRecordPaused Then Return
+    If $gRecordPauseIndex < 1 Then Return
+    If $gRecordPauseIndex > UBound($gCurrLines) - 1 Then Return
+
+    Local $line = $gCurrLines[$gRecordPauseIndex]
+    If StringLeft(StringStripWS($line, 3), 2) <> "P_" Then Return
+
+    Local $newLine = _RecorderSetFocusPauseLine(_RecorderSetCsvField($line, 4, ""))
+
+    $gCurrLines[$gRecordPauseIndex] = $newLine
+    $gActiveIndex = $gRecordPauseIndex
+    $gLastVisibleText = $newLine
+    _RenderCommands($gRecordPauseIndex)
+    GUICtrlSetData($cmbCmd, $newLine)
+
+    $gRecordPaused = False
+    $gRecordPauseIndex = 0
+    $gRecordManualFocusWait = True
+    $gRecordManualFocusWasDown = _IsPressed("01")
+    $mouseWasDown = False
+    $mouseButton = ""
+    $mouseDownInUI = False
+    _ResetKeyStates()
+    _HideRecorderTooltip()
+    GUICtrlSetData($status, "click target")
+
+EndFunc
+
+Func RecordManualFocusTick()
+
+    If Not $gRecordManualFocusWait Then Return
+
+    Local $leftDown = _IsPressed("01")
+
+    If $gRecordManualFocusWasDown Then
+        If Not $leftDown Then $gRecordManualFocusWasDown = False
+        Return
+    EndIf
+
+    If Not $leftDown Then
+        GUICtrlSetData($status, "click target")
+        Return
+    EndIf
+
+    If _MouseInsideRecorderUI() Then Return
+
+    While _IsPressed("01")
+        Sleep(5)
+    WEnd
+
+    $gRecordManualFocusWait = False
+    $gRecordManualFocusWasDown = False
+    $mouseWasDown = False
+    $mouseButton = ""
+    $mouseDownInUI = False
+    _ResetKeyStates()
+    $gTooltipLastTimer = TimerInit()
+
+    If $offsetMode Then
+        GUICtrlSetData($status, "OffsetOn")
+    Else
+        GUICtrlSetData($status, "Recording")
+    EndIf
+
+EndFunc
+
+Func _RecorderAppendManualFocusRem($line)
+    Return _RecorderSetFocusPauseLine($line)
+EndFunc
+
+Func _UpdatePauseDelayFromRecordTimer()
+
+    If $gRecordPauseIndex < 1 Then Return
+    If $gRecordPauseIndex > UBound($gCurrLines) - 1 Then Return
+
+    Local $seconds = TimerDiff($gRecordPauseTimer) / 1000
+    Local $line = $gCurrLines[$gRecordPauseIndex]
+
+    If StringLeft($line, 2) <> "P_" Then Return
+
+    Local $newLine = _RecorderSetCsvField($line, 4, _FormatSeconds($seconds))
+
+    $gCurrLines[$gRecordPauseIndex] = $newLine
+    $gLastVisibleText = $newLine
+    _RenderCommands($gRecordPauseIndex)
+
+EndFunc
+
+Func _RecorderSetCsvField($line, $target, $value)
+
+    Local $field = 1
+    Local $out = ""
+    Local $inQuote = False
+    Local $len = StringLen($line)
+    Local $replaced = False
+
+    For $i = 1 To $len
+
+        Local $ch = StringMid($line, $i, 1)
+
+        If $ch = '"' Then
+            If $inQuote And $i < $len And StringMid($line, $i + 1, 1) = '"' Then
+                If $field <> $target Then $out &= '""'
+                $i += 1
+                ContinueLoop
+            EndIf
+
+            $inQuote = Not $inQuote
+            If $field <> $target Then $out &= $ch
+            ContinueLoop
+        EndIf
+
+        If $ch = "," And Not $inQuote Then
+            If $field = $target Then
+                $out &= $value
+                $replaced = True
+            EndIf
+
+            $out &= ","
+            $field += 1
+            ContinueLoop
+        EndIf
+
+        If $field <> $target Then $out &= $ch
+
+    Next
+
+    If $field = $target Then
+        $out &= $value
+        $replaced = True
+    EndIf
+
+    While Not $replaced And $field < $target
+        $out &= ","
+        $field += 1
+        If $field = $target Then
+            $out &= $value
+            $replaced = True
+        EndIf
+    WEnd
+
+    Return $out
+
+EndFunc
+
+Func _CommitStringMode()
+
+    If StringLen($gStringBuffer) > 0 Then
+        Local $line = _
+            'S_S1,"' & _
+            StringReplace($gStringBuffer, '"', '""') & _
+            '",1,,rem_string'
+
+        AppendCommand($line)
+    EndIf
+
+    $gStringMode = False
+    $gStringBuffer = ""
+    _ResetKeyStates()
+
+    If $offsetMode Then
+        GUICtrlSetData($status, "OffsetOn")
+    Else
+        GUICtrlSetData($status, "Recording")
+    EndIf
+
+EndFunc
+
+; =====================================================
+; OFFSET MODE HOTKEY
+; Ctrl+Shift+O
+; =====================================================
+
+Func ToggleOffsetMode()
+
+    If Not $recording Then Return
+
+    If Not $offsetMode Then
+
+        $offsetMode = True
+        $offsetBaseSet = False
+        $offsetCount = 1
+        $offsetGroup += 1
+        $offsetF8StartIndex = 0
+        $offsetAnchorRegionSet = False
+        $offsetAnchorSet = False
+
+        AppendCommandToEnd(";= Offset Start " & $offsetGroup)
+
+        GUICtrlSetData($status, "OffsetOn")
+
+    Else
+
+        AppendCommandToEnd(";= Offset End " & $offsetGroup)
+
+        $offsetMode = False
+        $offsetBaseSet = False
+        $offsetCount = 1
+        $offsetF8StartIndex = 0
+        $offsetAnchorRegionSet = False
+        $offsetAnchorSet = False
+
+        GUICtrlSetData($status, "Recording")
+
+    EndIf
+
+EndFunc
+
+; =====================================================
+; CHECK WHETHER MOUSE IS INSIDE RECORDER UI
+; =====================================================
+
+Func _MouseInsideRecorderUI()
+
+    If _MouseInsideWindow($gui) Then Return True
+
+    If _MouseInsideReviewWindow() Then Return True
+    If $gTaskMode And _MouseInsideWindow($gTaskGui) Then Return True
+
+    Return False
+
+EndFunc
+
+Func _MouseInsideWindow($hwnd)
+
+    If $hwnd = 0 Then Return False
+
+    Local $pos = WinGetPos($hwnd)
+    If Not IsArray($pos) Then Return False
+
+    Local $m = MouseGetPos()
+
+    If $m[0] >= $pos[0] _
+        And $m[0] <= ($pos[0] + $pos[2]) _
+        And $m[1] >= $pos[1] _
+        And $m[1] <= ($pos[1] + $pos[3]) Then Return True
+
+    Return False
+
+EndFunc
+
+
+

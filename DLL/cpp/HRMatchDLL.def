@@ -1,0 +1,5 @@
+LIBRARY HRMatchDLL
+EXPORTS
+    HRM_Version
+    HRM_ImageSearch
+    HRM_FindText

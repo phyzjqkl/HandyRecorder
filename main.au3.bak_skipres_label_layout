@@ -1,0 +1,3057 @@
+#AutoIt3Wrapper_UseX64=n
+#AutoIt3Wrapper_Compression=4
+
+#include "config.au3"
+#include "filehandler.au3"
+#include "recorder.au3"
+#include "runner.au3"
+
+#include <GUIConstantsEx.au3>
+#include <WindowsConstants.au3>
+#include <File.au3>
+#include <GDIPlus.au3>
+#include <EditConstants.au3>
+#include <SliderConstants.au3>
+#include <ListBoxConstants.au3>
+#include <Array.au3>
+
+Global $running = False
+Global $recording = False
+
+Global $currentFile = ""
+
+Global $runIndex = 1
+Global $runLines[1]
+
+HR_EnableDpiAwareness()
+HR_InitRuntimePaths()
+InitConfig()
+
+Local $uiX = Number(CfgRead("UI", "x", "200"))
+Local $uiY = Number(CfgRead("UI", "y", "200"))
+If $uiX < 0 Or $uiX > @DesktopWidth - 80 Then $uiX = 200
+If $uiY < 0 Or $uiY > @DesktopHeight - 80 Then $uiY = 200
+
+Local $cfgActionDelay = CfgRead("Settings", "action_delay", "0.5")
+Local $cfgRepeatDelay = CfgRead("Settings", "repeat_delay", "3")
+Local $cfgAutoRepeat = CfgRead("Settings", "auto_repeat", "0")
+Local $cfgRunMode = HR_NormalizeRunMode(CfgRead("Settings", "run_mode", ""), CfgRead("Settings", "file_auto", "0"))
+Local $cfgReanchor = CfgRead("Settings", "offset_reanchor", "0")
+If CfgRead("Settings", "offset_reanchor_date", "") <> (@YEAR & @MON & @MDAY) Then $cfgReanchor = "1"
+
+Global $gBlinkEnabled = (CfgRead("UI", "blink_enabled", "1") = "1")
+Global $gBlinkPauseMs = Number(CfgRead("UI", "blink_pause_ms", "250"))
+Global $gBlinkButtonMs = Number(CfgRead("UI", "blink_button_ms", "700"))
+Global $gBlinkPauseTimer = TimerInit()
+Global $gBlinkButtonTimer = TimerInit()
+Global $gBlinkPauseOn = False
+Global $gBlinkButtonOn = False
+Global $gBlinkLastStatusText = "__INIT__"
+Global $gBlinkLastStatusColor = -1
+Global $gBlinkLastCmdColor = -1
+Global $gBlinkLastStartText = "__INIT__"
+Global $gBlinkLastRecText = "__INIT__"
+Global $gRunMode = $cfgRunMode
+Global $gMFStepReady = False
+
+Local $folderName = $gFlowName
+If $folderName = "" Then $folderName = HR_TaskNameFromPath($gExeDir)
+
+$gui = GUICreate("HR_" & $folderName, 260, 201, $uiX, $uiY, BitOR($WS_POPUP, $WS_BORDER), $WS_EX_APPWINDOW)
+WinSetOnTop($gui, "", 1)
+
+Global $btnTitleHelp = GUICtrlCreateButton("?", 188, 1, 20, 18)
+Global $btnTitleMin = GUICtrlCreateButton("-", 210, 1, 20, 18)
+Global $btnTitleClose = GUICtrlCreateButton("X", 232, 1, 22, 18)
+Global $lblTitle = GUICtrlCreateLabel("HR_" & $folderName, 5, 3, 183, 14)
+Global $gHelpTipVisible = False
+Global $gRegisteredHotkeys[1]
+Global $gReviewGui = 0
+Global $gReviewPic = 0
+Global $gReviewEdit = 0
+Global $gReviewSlider = 0
+Global $gReviewAnchorCrop = 0
+Global $gReviewVisible = False
+Global $gReviewFile = ""
+Global $gReviewLine = ""
+Global $gReviewEditText = ""
+Global $gReviewSyncing = False
+Global $gReviewW = 0
+Global $gReviewH = 0
+Global $gReviewDispW = 0
+Global $gReviewDispH = 0
+Global $gReviewZoom = 2
+Global $gReviewSliderValue = 2
+Global $gReviewDrag = False
+Global $gReviewStartX = 0
+Global $gReviewStartY = 0
+Global $gReviewRectL = 0
+Global $gReviewRectT = 0
+Global $gReviewRectR = 0
+Global $gReviewRectB = 0
+Global $gReviewScreenL = 0
+Global $gReviewScreenT = 0
+Global $gReviewScreenR = 0
+Global $gReviewScreenB = 0
+Global $gReviewOverlayFile = ""
+Global Const $gReviewEditH = 58
+Global Const $gReviewSliderH = 28
+Global Const $gReviewMinW = 260
+Global $chkReanchor = 0
+Global $lblMouseInfo = 0
+Global $chkTooltip = 0
+Global $btnAddTask = 0
+Global $cmbTasks = 0
+Global $gTaskRegistryGui = 0
+Global $gTaskRegistryAddExisting = 0
+Global $gTaskRegistryLoad = 0
+Global $gTaskRegistryNew = 0
+Global $gTaskRegistryEdit = 0
+Global $btnTask = 0
+Global $gTaskMode = False
+Global $gTaskGui = 0
+Global $gTaskList = 0
+Global $gTaskNameInput = 0
+Global $gTaskBtnBlock = 0
+Global $gTaskBtnFork = 0
+Global $gTaskBtnUp = 0
+Global $gTaskBtnDown = 0
+Global $gTaskBtnDelete = 0
+Global $gTaskBtnSaveLine = 0
+Global $gTaskRecList = 0
+Global $gTaskBlkList = 0
+Global $gTaskRecInsert = 0
+Global $gTaskBlkInsert = 0
+Global $gTaskRecFolder = 0
+Global $gTaskBlkFolder = 0
+Global $gTaskVarList = 0
+Global $gTaskVarRefresh = 0
+Global $gTaskRecDir = ""
+Global $gTaskBlkDir = ""
+Global $btnFork = 0
+Global $btnPauseCmd = 0
+Global $btnDelayCmd = 0
+Global $btnFocusPauseCmd = 0
+Global $btnVar = 0
+Global $btnChar = 0
+Global $gVarCandCount = 0
+Global $gVarCandLabel[24]
+Global $gVarCandName[24]
+Global $gVarCandV1[24]
+Global $gVarCandV2[24]
+Global $gVarCandF1[24]
+Global $gVarCandF2[24]
+Global $gVarCandType[24]
+
+$btnAddTask = GUICtrlCreateButton("Tasks", 5, 21, 50, 20)
+$btnTask = 0
+$btnChar = GUICtrlCreateButton("C", 63, 21, 20, 20)
+$btnNew = GUICtrlCreateButton("Recs", 88, 21, 46, 20)
+$chkFileAuto = GUICtrlCreateButton(HR_RunModeDisplay($gRunMode), 145, 21, 58, 20)
+Global $chkSkipRes = 0
+$cmbTasks = GUICtrlCreateCombo("", 5, 44, 75, 20)
+$cmbFiles = GUICtrlCreateCombo("", 88, 44, 121, 20)
+
+GUICtrlCreateLabel("Commands", 5, 70, 80, 14)
+$chkRepeat = GUICtrlCreateCheckbox("Auto", 86, 71, 50, 20)
+If $cfgAutoRepeat = "1" Then GUICtrlSetState($chkRepeat, $GUI_CHECKED)
+Global $chkReview = GUICtrlCreateCheckbox("Review", 136, 71, 68, 20)
+GUICtrlSetState($chkReview, $GUI_UNCHECKED)
+$cmbCmd = GUICtrlCreateCombo("", 5, 94, 198, 20)
+
+GUICtrlCreateLabel("A", 5, 123, 10, 14)
+$inputAction = GUICtrlCreateInput($cfgActionDelay, 16, 121, 32, 18)
+
+GUICtrlCreateLabel("R", 56, 123, 10, 14)
+$inputRepeat = GUICtrlCreateInput($cfgRepeatDelay, 67, 121, 32, 18)
+$chkReanchor = GUICtrlCreateCheckbox("RePin", 108, 120, 58, 20)
+If $cfgReanchor = "1" Then GUICtrlSetState($chkReanchor, $GUI_CHECKED)
+$btnPauseCmd = GUICtrlCreateButton("P", 179, 120, 20, 20)
+$btnFocusPauseCmd = GUICtrlCreateButton("K", 203, 120, 20, 20)
+$btnDelayCmd = GUICtrlCreateButton("T", 226, 120, 20, 20)
+
+$btnRem = GUICtrlCreateButton("L", 212, 21, 20, 20)
+$btnDel = GUICtrlCreateButton("D", 202, 120, 22, 20)
+$btnN = GUICtrlCreateButton("N", 174, 143, 22, 20)
+$btnX = GUICtrlCreateButton("X", 202, 143, 22, 20)
+GUICtrlSetState($btnDel, $GUI_HIDE)
+GUICtrlSetState($btnN, $GUI_HIDE)
+GUICtrlSetState($btnX, $GUI_HIDE)
+
+$btnSave = GUICtrlCreateButton("S", 235, 21, 20, 20)
+Global $btnDup = GUICtrlCreateButton("D", 212, 44, 20, 20)
+$btnFork = GUICtrlCreateButton("F", 235, 44, 20, 20)
+$btnVar = GUICtrlCreateButton("V", 223, 70, 22, 20)
+$btnPlus = GUICtrlCreateButton("+", 212, 94, 22, 20)
+$btnMinus = GUICtrlCreateButton("-", 233, 94, 22, 20)
+
+$btnStart = GUICtrlCreateButton("Start", 5, 148, 58, 22)
+$btnRun = GUICtrlCreateButton(">", 68, 148, 26, 22)
+$btnRec = GUICtrlCreateButton("Rec", 98, 148, 46, 22)
+
+$lblMouseInfo = GUICtrlCreateLabel("", 5, 166, 170, 14)
+GUICtrlCreateLabel("XY", 226, 164, 28, 14)
+$status = GUICtrlCreateLabel("Idle", 5, 184, 174, 16)
+$chkSkipRes = GUICtrlCreateCheckbox("SkipRes", 178, 180, 42, 18)
+GUICtrlSetState($chkSkipRes, $GUI_UNCHECKED)
+$chkTooltip = GUICtrlCreateCheckbox("", 226, 180, 18, 18)
+
+GUIRegisterMsg($WM_NCHITTEST, "HR_WM_NCHITTEST")
+
+GUISetState()
+Review_Init()
+TaskRegistry_RefreshCombo($appPath)
+
+RegisterAppHotkeys()
+
+If $gTaskActive Then
+    EnsureActionWorkspace()
+    _CreateDefaultRecord()
+    Local $startupRecord = GetStartupRecordName()
+    If $startupRecord = "" Then $startupRecord = "record1"
+    $currentFile = RecordPath($startupRecord)
+    $gLoadedRecordName = $startupRecord
+    RefreshFiles($startupRecord)
+    GUICtrlSetData($cmbFiles, $startupRecord)
+    LoadCommands($currentFile)
+Else
+    $currentFile = ""
+    $gLoadedRecordName = ""
+    GUICtrlSetData($cmbFiles, "|", "")
+    GUICtrlSetData($cmbCmd, "|", "")
+    GUICtrlSetData($status, "NoTask")
+EndIf
+TaskRegistry_UpdateTitle()
+TaskRegistry_RefreshCombo($appPath)
+
+While 1
+
+    Local $msgInfo = GUIGetMsg(1)
+    Local $msg = $msgInfo[0]
+    Local $msgHwnd = $msgInfo[1]
+
+    If $gReviewAnchorCrop <> 0 And $msg = $gReviewAnchorCrop Then
+        Review_RecropFromCommandAnchor()
+        ContinueLoop
+    EndIf
+
+    If $gTaskRegistryGui <> 0 And $msgHwnd = $gTaskRegistryGui Then
+        Switch $msg
+            Case $GUI_EVENT_CLOSE
+                TaskRegistry_Close()
+            Case $gTaskRegistryLoad
+                TaskRegistry_LoadTasksFile()
+            Case $gTaskRegistryAddExisting
+                TaskRegistry_AddExisting()
+            Case $gTaskRegistryNew
+                TaskRegistry_CreateNew()
+            Case $gTaskRegistryEdit
+                TaskRegistry_Close()
+                TaskEditor_Open()
+        EndSwitch
+        ContinueLoop
+    EndIf
+
+    If $gTaskMode And $msgHwnd = $gTaskGui Then
+        Switch $msg
+            Case $GUI_EVENT_CLOSE
+                TaskEditor_SyncLineEdit()
+                TaskEditor_Close()
+            Case $gTaskList
+                TaskEditor_LoadSelectedLine()
+            Case $gTaskBtnSaveLine
+                TaskEditor_SyncLineEdit()
+                TaskEditor_Load()
+            Case $gTaskBtnBlock
+                TaskEditor_SyncLineEdit()
+                TaskEditor_BlockSelected()
+            Case $gTaskBtnFork
+                TaskEditor_SyncLineEdit()
+                TaskEditor_ForkSelected()
+            Case $gTaskBtnUp
+                TaskEditor_SyncLineEdit()
+                TaskEditor_MoveSelected(-1)
+            Case $gTaskBtnDown
+                TaskEditor_SyncLineEdit()
+                TaskEditor_MoveSelected(1)
+            Case $gTaskRecList
+                TaskEditor_LoadBrowserSelection("rec")
+            Case $gTaskBlkList
+                TaskEditor_LoadBrowserSelection("blk")
+            Case $gTaskRecFolder
+                TaskEditor_ChooseBrowserFolder("rec")
+            Case $gTaskBlkFolder
+                TaskEditor_ChooseBrowserFolder("blk")
+            Case $gTaskRecInsert
+                TaskEditor_InsertBrowserSelection("rec")
+            Case $gTaskBlkInsert
+                TaskEditor_InsertBrowserSelection("blk")
+            Case $gTaskVarRefresh
+                TaskEditor_RefreshSidePanels()
+            Case $gTaskBtnDelete
+                TaskEditor_SyncLineEdit()
+                TaskEditor_DeleteSelected()
+        EndSwitch
+        ContinueLoop
+    EndIf
+
+    Switch $msg
+        Case $GUI_EVENT_CLOSE
+            TaskRegistry_Close()
+            SaveAppConfig()
+            Exit
+        Case $btnTitleClose
+            HR_HideHelp()
+            Review_Close()
+            TaskRegistry_Close()
+            SaveAppConfig()
+            Exit
+        Case $btnTitleMin
+            HR_HideHelp()
+            WinSetState($gui, "", @SW_MINIMIZE)
+        Case $btnTitleHelp
+            HR_ToggleHelp()
+        Case $btnStart
+            ToggleRun()
+        Case $btnRun
+            RunActiveCommandAndNext()
+        Case $btnRec
+            ToggleRecord()
+        Case $btnRem
+            ReloadConfigAndRecordList()
+        Case $btnNew
+            CreateNewRecordAndStartRecording()
+        Case $btnChar
+            AppendCommand("K_B1,,1,,rem_key")
+        Case $chkFileAuto
+            CycleRunMode()
+        Case $btnAddTask
+            TaskRegistry_Open()
+        Case $cmbTasks
+            TaskRegistry_SwitchSelected()
+        Case $btnSave
+            SaveRecordButtonAction()
+        Case $btnDup
+            DuplicateActiveRecord()
+        Case $btnFork
+            CreateForkFromActiveRecord()
+        Case $btnVar
+            VarOpenPopup()
+        Case $chkTooltip
+            ToggleTooltipDisplay()
+        Case $btnPauseCmd
+            AppendCommand('P_P1,"",1,,rem_pause')
+        Case $btnFocusPauseCmd
+            AppendCommand('P_F1,"",1,,rem_<target>')
+        Case $btnDelayCmd
+            AppendCommand("T_D1,1,1,,rem_delay")
+        Case $btnPlus
+            InsertAfterSelected()
+        Case $btnMinus
+            DeleteSelectedCommand()
+        Case $chkReview
+            Review_Toggle()
+        Case $cmbCmd
+            UpdateActiveIndexOnly()
+            Review_UpdateFromActive()
+        Case $cmbFiles
+            Local $f = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+            If $f <> "" Then
+                $currentFile = RecordPath($f)
+                If FileExists($currentFile) Then
+                    $gLoadedRecordName = _CleanRecordName($f)
+                    LoadCommands($currentFile)
+                    Review_UpdateFromActive()
+                Else
+                    GUICtrlSetData($status, "NoFile")
+                EndIf
+            EndIf
+    EndSwitch
+
+    PollRecorder()
+    _UpdateTooltipInfo()
+    If $gTooltipEnabled Then
+        GUICtrlSetState($chkTooltip, $GUI_CHECKED)
+    Else
+        GUICtrlSetState($chkTooltip, $GUI_UNCHECKED)
+    EndIf
+    ManualFocusTick()
+    Review_Poll()
+    UpdateBlinkUI()
+    SyncSelectedRecordDisplay()
+
+    If $running Then RunNextCommand()
+
+    Sleep(10)
+
+WEnd
+
+Func SyncSelectedRecordDisplay()
+
+    If $recording Or $running Or $runPaused Then Return
+    If $cmbFiles = 0 Then Return
+
+    Local $name = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    If $name = "" Then Return
+
+    Local $cleanName = _CleanRecordName($name)
+    If $cleanName = "" Then Return
+
+    Local $needsLoad = False
+    If $gLoadedRecordName <> $cleanName Then $needsLoad = True
+    If UBound($gCurrLines) <= 1 Then $needsLoad = True
+
+    If Not $needsLoad Then Return
+    If Not FileExists(RecordPath($cleanName)) Then Return
+
+    SelectRecordByName($cleanName)
+
+EndFunc
+
+Func HR_EnableDpiAwareness()
+
+    ; Keep mouse coordinates and screenshot coordinates in the same pixel space
+    ; when Windows display scaling is not 100%.
+    Local $aRet = DllCall("user32.dll", "bool", "SetProcessDpiAwarenessContext", "ptr", -4)
+    If IsArray($aRet) And $aRet[0] Then Return
+
+    $aRet = DllCall("shcore.dll", "long", "SetProcessDpiAwareness", "int", 2)
+    If IsArray($aRet) And $aRet[0] = 0 Then Return
+
+    DllCall("user32.dll", "bool", "SetProcessDPIAware")
+
+EndFunc
+
+Func RegisterAppHotkeys()
+
+    _ClearRegisteredHotkeys()
+
+    _RegisterHotkey(CfgRead("Hotkeys", "playback_pause", "{F9}"), "TogglePlaybackPause")
+    _RegisterHotkey(CfgRead("Hotkeys", "manual_focus_resume", "^{F9}"), "ManualFocusResume")
+    _RegisterHotkey(CfgRead("Hotkeys", "record_off", "!{F9}"), "StopRecordOnly")
+    _RegisterHotkey(CfgRead("Hotkeys", "emergency_stop", "+{F9}"), "StopOrOff")
+    _RegisterHotkey(CfgRead("Hotkeys", "start_stop", ""), "ToggleRun")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_active", "{F6}"), "RunActiveCommand")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_active_next", "+{F6}"), "RunActiveCommandAndNext")
+    _RegisterHotkey(CfgRead("Hotkeys", "active_line_prev", "{F5}"), "SelectPreviousCommand")
+    _RegisterHotkey(CfgRead("Hotkeys", "active_line_next", "{F7}"), "SelectNextCommand")
+    _RegisterHotkey(CfgRead("Hotkeys", "file_prev", "!{F5}"), "SelectPreviousRecordFile")
+    _RegisterHotkey(CfgRead("Hotkeys", "file_next", "!{F7}"), "SelectNextRecordFile")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_current_file", "!{F6}"), "RunSelectedRecordFile")
+    _RegisterHotkey(CfgRead("Hotkeys", "mode_cycle", "^{F6}"), "CycleRunMode")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_1", "^!1"), "RunRecordFile1")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_2", "^!2"), "RunRecordFile2")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_3", "^!3"), "RunRecordFile3")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_4", "^!4"), "RunRecordFile4")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_5", "^!5"), "RunRecordFile5")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_6", "^!6"), "RunRecordFile6")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_7", "^!7"), "RunRecordFile7")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_8", "^!8"), "RunRecordFile8")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_9", "^!9"), "RunRecordFile9")
+    _RegisterHotkey(CfgRead("Hotkeys", "run_file_0", "^!0"), "RunRecordFile0")
+    _RegisterHotkey(CfgRead("Hotkeys", "string_toggle", "^+t"), "ToggleStringRecord")
+    _RegisterHotkey(CfgRead("Hotkeys", "offset_toggle", "{F8}"), "ToggleOffsetMouseMarkerHotkey")
+    _RegisterHotkey(CfgRead("Hotkeys", "tooltip_toggle", "^+y"), "ToggleTooltipDisplay")
+    _RegisterHotkey(CfgRead("Hotkeys", "mouse_move", "+{F8}"), "RecordMouseMoveHotkey")
+
+EndFunc
+
+Func StopOrOff()
+
+    If $recording Then
+        ToggleRecord()
+        Return
+    EndIf
+
+    StopRun()
+
+EndFunc
+
+Func StopRecordOnly()
+
+    If $recording Then ToggleRecord()
+
+EndFunc
+
+Func _RegisterHotkey($key, $func)
+
+    $key = StringStripWS($key, 3)
+    If $key = "" Then Return
+
+    HotKeySet($key, $func)
+
+    Local $n = UBound($gRegisteredHotkeys)
+    ReDim $gRegisteredHotkeys[$n + 1]
+    $gRegisteredHotkeys[$n] = $key
+
+EndFunc
+
+Func _ClearRegisteredHotkeys()
+
+    For $i = 1 To UBound($gRegisteredHotkeys) - 1
+        If $gRegisteredHotkeys[$i] <> "" Then HotKeySet($gRegisteredHotkeys[$i])
+    Next
+
+    ReDim $gRegisteredHotkeys[1]
+
+EndFunc
+
+Func CycleRunMode()
+
+    $gRunMode = HR_NextRunMode($gRunMode)
+    GUICtrlSetData($chkFileAuto, HR_RunModeDisplay($gRunMode))
+    IniWrite($iniFile, "Settings", "run_mode", $gRunMode)
+    If $gRunMode = "A" Then
+        IniWrite($iniFile, "Settings", "file_auto", "1")
+    Else
+        IniWrite($iniFile, "Settings", "file_auto", "0")
+    EndIf
+    If Not $running And Not $runPaused And Not $recording Then GUICtrlSetData($status, "Idle")
+
+EndFunc
+Func ReloadConfigAndRecordList()
+
+    EnsureDefaultIniValues()
+    RegisterAppHotkeys()
+    TaskRegistry_RefreshCombo($appPath)
+
+    GUICtrlSetData($inputAction, CfgRead("Settings", "action_delay", "0.5"))
+    GUICtrlSetData($inputRepeat, CfgRead("Settings", "repeat_delay", "3"))
+    $gBlinkEnabled = (CfgRead("UI", "blink_enabled", "1") = "1")
+    $gBlinkPauseMs = Number(CfgRead("UI", "blink_pause_ms", "250"))
+    $gBlinkButtonMs = Number(CfgRead("UI", "blink_button_ms", "700"))
+    If $gBlinkPauseMs < 120 Then $gBlinkPauseMs = 120
+    If $gBlinkButtonMs < 300 Then $gBlinkButtonMs = 300
+
+    If Not $recording Then
+        If CfgRead("Settings", "auto_repeat", "0") = "1" Then
+            GUICtrlSetState($chkRepeat, $GUI_CHECKED)
+        Else
+            GUICtrlSetState($chkRepeat, $GUI_UNCHECKED)
+        EndIf
+    EndIf
+
+    $gRunMode = HR_NormalizeRunMode(CfgRead("Settings", "run_mode", ""), CfgRead("Settings", "file_auto", "0"))
+    GUICtrlSetData($chkFileAuto, HR_RunModeDisplay($gRunMode))
+
+    Local $reloadReanchor = CfgRead("Settings", "offset_reanchor", "0")
+    If CfgRead("Settings", "offset_reanchor_date", "") <> (@YEAR & @MON & @MDAY) Then $reloadReanchor = "1"
+    If $reloadReanchor = "1" Then
+        GUICtrlSetState($chkReanchor, $GUI_CHECKED)
+    Else
+        GUICtrlSetState($chkReanchor, $GUI_UNCHECKED)
+    EndIf
+
+    If Not $gTaskActive Then
+        ReDim $gCurrLines[1]
+        $gActiveIndex = 0
+        $gLoadedRecordName = ""
+        $currentFile = ""
+        GUICtrlSetData($cmbFiles, "|", "")
+        GUICtrlSetData($cmbCmd, "|", "")
+        GUICtrlSetData($status, "NoTask")
+        If $gHelpTipVisible Then HR_ShowHelp()
+        Return
+    EndIf
+
+    ReloadRecordList()
+    If $recording Then
+        If $offsetMode Then
+            GUICtrlSetData($status, "OffsetOn")
+        Else
+            GUICtrlSetData($status, "Recording")
+        EndIf
+    ElseIf $running Then
+        GUICtrlSetData($status, "Running")
+    Else
+        GUICtrlSetData($status, "Idle")
+    EndIf
+
+    If $gHelpTipVisible Then HR_ShowHelp()
+
+EndFunc
+
+Func TaskRegistry_Open()
+
+    If $gTaskRegistryGui <> 0 Then
+        WinActivate($gTaskRegistryGui)
+        Return
+    EndIf
+
+    Local $pos = WinGetPos($gui)
+    Local $x = 260
+    Local $y = 220
+    If IsArray($pos) Then
+        $x = $pos[0] + 12
+        $y = $pos[1] + 70
+    EndIf
+
+    $gTaskRegistryGui = GUICreate("Task", 214, 108, $x, $y, BitOR($WS_CAPTION, $WS_SYSMENU), $WS_EX_TOOLWINDOW, $gui)
+    $gTaskRegistryAddExisting = GUICtrlCreateButton("Load", 8, 8, 60, 24)
+    $gTaskRegistryNew = GUICtrlCreateButton("New", 76, 8, 60, 24)
+    $gTaskRegistryEdit = GUICtrlCreateButton("Edit", 144, 8, 60, 24)
+    GUICtrlCreateLabel("Load/create/edit current task.", 8, 44, 198, 18)
+    GUICtrlCreateLabel("Task list is stored beside HR.exe.", 8, 66, 198, 18)
+
+    GUISetState(@SW_SHOW, $gTaskRegistryGui)
+    WinSetOnTop($gTaskRegistryGui, "", 1)
+
+EndFunc
+
+Func TaskRegistry_Close()
+
+    If $gTaskRegistryGui <> 0 Then GUIDelete($gTaskRegistryGui)
+    $gTaskRegistryGui = 0
+    $gTaskRegistryAddExisting = 0
+    $gTaskRegistryLoad = 0
+    $gTaskRegistryNew = 0
+    $gTaskRegistryEdit = 0
+
+EndFunc
+
+Func TaskRegistry_LoadTasksFile()
+
+    Local $startDir = $gExeDir
+    Local $tasks = FileOpenDialog("Load task list .tasks", $startDir, "Task list (*.tasks)", 1)
+    If @error Or $tasks = "" Then Return
+
+    If Not HR_SetTaskRegistryFile($tasks) Then
+        GUICtrlSetData($status, "BadTasks")
+        Return
+    EndIf
+
+    Local $taskPath = HR_TaskRegistryActivePath()
+    TaskRegistry_Close()
+
+    If $taskPath <> "" Then
+        TaskRegistry_SwitchToPath($taskPath, False)
+    Else
+        HR_ClearActiveTask()
+        TaskRegistry_UpdateTitle()
+        TaskRegistry_RefreshCombo("")
+        GUICtrlSetData($cmbFiles, "|", "")
+        GUICtrlSetData($cmbCmd, "|", "")
+        GUICtrlSetData($status, "NoTask")
+    EndIf
+
+EndFunc
+Func TaskRegistry_AddExisting()
+
+    Local $startDir = $appPath
+    If $startDir = "" Then $startDir = $gExeDir
+
+    Local $tsk = FileOpenDialog("Select task .tsk", $startDir, "Task (*.tsk)", 1)
+    If @error Or $tsk = "" Then Return
+
+    Local $pos = StringInStr($tsk, "\", 0, -1)
+    If $pos < 2 Then Return
+
+    Local $taskPath = StringLeft($tsk, $pos - 1)
+    TaskRegistry_Close()
+    TaskRegistry_SwitchToPath($taskPath)
+
+EndFunc
+
+Func TaskRegistry_CreateNew()
+
+    Local $choice = FileSaveDialog("New task name", $gExeDir, "Task name (*.*)", 2, "newtask")
+    If @error Or $choice = "" Then Return
+
+    Local $basePath = HR_TaskPathFromNewTaskChoice($choice)
+    If $basePath = "" Then Return
+
+    Local $sep = StringInStr($basePath, "\", 0, -1)
+    If $sep < 2 Then Return
+
+    Local $parent = StringLeft($basePath, $sep - 1)
+    Local $name = HR_TaskNameFromPath($basePath)
+    If $parent = "" Or $name = "" Then Return
+
+    Local $taskPath = HR_UniqueChildPath($parent, $name)
+    TaskRegistry_CreateEmptyTask($taskPath)
+    TaskRegistry_Close()
+    TaskRegistry_SwitchToPath($taskPath, False)
+
+EndFunc
+
+Func TaskRegistry_CreateEmptyTask($taskPath)
+
+    $taskPath = HR_NormalizePath($taskPath)
+    If $taskPath = "" Then Return False
+
+    Local $taskName = HR_TaskNameFromPath($taskPath)
+    If $taskName = "" Then $taskName = "newtask"
+
+    DirCreate($taskPath)
+    DirCreate($taskPath & "\micracts")
+    DirCreate($taskPath & "\index")
+    DirCreate($taskPath & "\export")
+    DirCreate($taskPath & "\blk")
+
+    Local $tskFile = $taskPath & "\" & $taskName & ".tsk"
+    If Not FileExists($tskFile) Then
+        Local $h = FileOpen($tskFile, 2)
+        If $h <> -1 Then FileClose($h)
+    EndIf
+
+    Return True
+
+EndFunc
+
+Func TaskRegistry_RefreshCombo($selectPath = "")
+
+    If $cmbTasks = 0 Then Return
+
+    Local $names[1]
+    Local $paths[1]
+    Local $count = HR_TaskRegistryLoad($names, $paths)
+    Local $data = ""
+    Local $selectedName = ""
+
+    If $selectPath = "" Then $selectPath = $appPath
+    $selectPath = HR_NormalizePath($selectPath)
+
+    For $i = 1 To $count
+        If $data = "" Then
+            $data = $names[$i]
+        Else
+            $data &= "|" & $names[$i]
+        EndIf
+
+        If StringLower(HR_NormalizePath($paths[$i])) = StringLower($selectPath) Then $selectedName = $names[$i]
+    Next
+
+    GUICtrlSetData($cmbTasks, "|" & $data, $selectedName)
+
+EndFunc
+
+Func TaskRegistry_SwitchSelected()
+
+    Local $name = StringStripWS(GUICtrlRead($cmbTasks), 3)
+    If $name = "" Then Return
+
+    Local $names[1]
+    Local $paths[1]
+    Local $count = HR_TaskRegistryLoad($names, $paths)
+
+    For $i = 1 To $count
+        If $names[$i] = $name Then
+            TaskRegistry_SwitchToPath($paths[$i])
+            Return
+        EndIf
+    Next
+
+EndFunc
+
+Func TaskRegistry_SwitchToPath($taskPath, $createDefaultRecord = True)
+
+    If $recording Or $running Or $runPaused Then
+        GUICtrlSetData($status, "IdleOnly")
+        TaskRegistry_RefreshCombo($appPath)
+        Return False
+    EndIf
+
+    $taskPath = HR_NormalizePath($taskPath)
+    If $taskPath = "" Then Return False
+
+    SaveAppConfig()
+    Review_Close()
+    TaskEditor_Close()
+
+    HR_SetActiveTask($taskPath)
+    HR_RegisterTaskPath($appPath, True)
+    InitConfig()
+    EnsureActionWorkspace()
+    If $createDefaultRecord Then _CreateDefaultRecord()
+    TaskRegistry_UpdateTitle()
+    TaskRegistry_RefreshCombo($appPath)
+    If $createDefaultRecord Then
+        ReloadConfigAndRecordList()
+    Else
+        RefreshFiles("")
+        GUICtrlSetData($cmbFiles, "")
+        GUICtrlSetData($cmbCmd, "|", "")
+        $currentFile = ""
+        $gLoadedRecordName = ""
+    EndIf
+
+    GUICtrlSetData($status, "Idle")
+    Return True
+
+EndFunc
+
+Func TaskRegistry_UpdateTitle()
+
+    Local $name = $gFlowName
+    If $name = "" Then $name = HR_TaskNameFromPath($gExeDir)
+    If $name = "" Then $name = "handyrecorder"
+
+    GUICtrlSetData($lblTitle, "HR_" & $name)
+    WinSetTitle($gui, "", "HR_" & $name)
+
+EndFunc
+
+Func TaskEditor_Toggle()
+
+    If $gTaskMode Then
+        TaskEditor_Close()
+    Else
+        TaskEditor_Open()
+    EndIf
+
+EndFunc
+
+Func TaskEditor_Open()
+
+    If Not $gTaskActive Then
+        GUICtrlSetData($status, "NoTask")
+        Return
+    EndIf
+    If Not EnsureActionWorkspace() Then Return
+
+    Local $pos = WinGetPos($gui)
+    Local $x = 200
+    Local $y = 200
+    If IsArray($pos) Then
+        $x = $pos[0] + $pos[2]
+        $y = $pos[1]
+    EndIf
+
+    If $gTaskGui <> 0 Then GUIDelete($gTaskGui)
+
+    $gTaskGui = GUICreate("TSK", 392, 318, $x, $y, $WS_OVERLAPPEDWINDOW, $WS_EX_TOOLWINDOW, $gui)
+    GUICtrlCreateLabel($gActionName & ".tsk", 6, 6, 148, 16)
+    $gTaskList = GUICtrlCreateList("", 6, 24, 204, 176, BitOR($WS_BORDER, $WS_VSCROLL, $LBS_EXTENDEDSEL))
+    $gTaskNameInput = GUICtrlCreateInput("", 6, 208, 204, 20)
+    $gTaskBtnUp = GUICtrlCreateButton("<", 6, 242, 28, 24)
+    $gTaskBtnDelete = GUICtrlCreateButton("X", 42, 242, 28, 24)
+    $gTaskBtnDown = GUICtrlCreateButton(">", 78, 242, 28, 24)
+    $gTaskBtnBlock = GUICtrlCreateButton("B", 114, 242, 28, 24)
+    $gTaskBtnFork = GUICtrlCreateButton("F", 150, 242, 28, 24)
+    $gTaskBtnSaveLine = GUICtrlCreateButton("S", 186, 242, 28, 24)
+    GUICtrlCreateLabel("rec", 238, 6, 34, 16)
+    $gTaskRecFolder = GUICtrlCreateButton("...", 326, 2, 28, 20)
+    $gTaskRecInsert = GUICtrlCreateButton("<-", 214, 50, 22, 22)
+    $gTaskRecList = GUICtrlCreateList("", 238, 24, 148, 76, BitOR($WS_BORDER, $WS_VSCROLL))
+    GUICtrlCreateLabel("blk", 238, 106, 34, 16)
+    $gTaskBlkFolder = GUICtrlCreateButton("...", 326, 102, 28, 20)
+    $gTaskBlkInsert = GUICtrlCreateButton("<-", 214, 144, 22, 22)
+    $gTaskBlkList = GUICtrlCreateList("", 238, 124, 148, 62, BitOR($WS_BORDER, $WS_VSCROLL))
+    GUICtrlCreateLabel("Variable", 238, 194, 70, 16)
+    $gTaskVarRefresh = GUICtrlCreateButton("R", 358, 190, 28, 20)
+    $gTaskVarList = GUICtrlCreateList("", 238, 212, 148, 74, BitOR($WS_BORDER, $WS_VSCROLL))
+    GUISetState(@SW_SHOW, $gTaskGui)
+    WinSetOnTop($gTaskGui, "", 1)
+
+    $gTaskMode = True
+    TaskEditor_Load()
+    TaskEditor_LoadBrowsers()
+    TaskEditor_LoadVariables()
+
+EndFunc
+
+Func TaskEditor_Close()
+
+    If $gTaskGui <> 0 Then GUIDelete($gTaskGui)
+    $gTaskGui = 0
+    $gTaskList = 0
+    $gTaskNameInput = 0
+    $gTaskBtnBlock = 0
+    $gTaskBtnFork = 0
+    $gTaskBtnUp = 0
+    $gTaskBtnDown = 0
+    $gTaskBtnDelete = 0
+    $gTaskBtnSaveLine = 0
+    $gTaskRecList = 0
+    $gTaskBlkList = 0
+    $gTaskRecInsert = 0
+    $gTaskBlkInsert = 0
+    $gTaskRecFolder = 0
+    $gTaskBlkFolder = 0
+    $gTaskVarList = 0
+    $gTaskVarRefresh = 0
+    $gTaskRecDir = ""
+    $gTaskBlkDir = ""
+    $gTaskMode = False
+    ReloadRecordList()
+
+EndFunc
+
+Func TaskEditor_Load()
+
+    If $gTaskList = 0 Then Return
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    Local $data = ""
+
+    For $i = 1 To $count
+        Local $line = TaskTrimRight($lines[$i])
+        If $line = "" Then ContinueLoop
+        Local $display = TaskDisplayLine($line)
+        If $data = "" Then
+            $data = $display
+        Else
+            $data &= "|" & $display
+        EndIf
+    Next
+
+    GUICtrlSetData($gTaskList, "|" & $data)
+    GUICtrlSetData($gTaskNameInput, "")
+
+EndFunc
+
+Func TaskEditor_LoadSelectedLine()
+
+    If $gTaskList = 0 Or $gTaskNameInput = 0 Then Return
+    Local $first, $last
+    If Not TaskEditor_SelectedRange($first, $last) Then Return
+    If $first <> $last Then Return
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    If $first < 1 Or $first > $count Then Return
+    GUICtrlSetData($gTaskNameInput, TaskTrimRight($lines[$first]))
+
+EndFunc
+
+Func TaskEditor_SyncLineEdit()
+
+    If $gTaskList = 0 Or $gTaskNameInput = 0 Then Return False
+
+    Local $first, $last
+    If Not TaskEditor_SelectedRange($first, $last) Then Return False
+    If $first <> $last Then Return False
+
+    Local $txt = GUICtrlRead($gTaskNameInput)
+    $txt = TaskTrimRight($txt)
+    If StringStripWS($txt, 3) = "" Then Return False
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    If $first < 1 Or $first > $count Then Return False
+    If $lines[$first] = $txt Then Return True
+
+    $lines[$first] = $txt
+    TaskWriteLines($lines)
+    ReloadRecordList()
+    Return True
+
+EndFunc
+
+Func TaskEditor_SelectedRange(ByRef $first, ByRef $last)
+
+    $first = -1
+    $last = -1
+    If $gTaskList = 0 Then Return False
+
+    Local Const $LB_GETSELCOUNT = 0x0190
+    Local Const $LB_GETSELITEMS = 0x0191
+    Local Const $LB_GETCURSEL = 0x0188
+
+    Local $selCount = GUICtrlSendMsg($gTaskList, $LB_GETSELCOUNT, 0, 0)
+    If $selCount < 1 Then
+        Local $cur = GUICtrlSendMsg($gTaskList, $LB_GETCURSEL, 0, 0)
+        If $cur < 0 Then Return False
+        $first = $cur + 1
+        $last = $cur + 1
+        Return True
+    EndIf
+
+    Local $tItems = DllStructCreate("int[" & $selCount & "]")
+    GUICtrlSendMsg($gTaskList, $LB_GETSELITEMS, $selCount, DllStructGetPtr($tItems))
+
+    For $i = 1 To $selCount
+        Local $idx = DllStructGetData($tItems, 1, $i) + 1
+        If $first = -1 Or $idx < $first Then $first = $idx
+        If $last = -1 Or $idx > $last Then $last = $idx
+    Next
+
+    If ($last - $first + 1) <> $selCount Then
+        GUICtrlSetData($status, "SelBlock")
+        Return False
+    EndIf
+
+    Return True
+
+EndFunc
+
+Func TaskEditor_SelectRange($first, $last)
+
+    If $gTaskList = 0 Then Return
+    If $first < 1 Then $first = 1
+    If $last < $first Then $last = $first
+
+    Local Const $LB_SETSEL = 0x0185
+    Local Const $LB_SETCURSEL = 0x0186
+
+    GUICtrlSendMsg($gTaskList, $LB_SETSEL, 0, -1)
+    For $i = $first To $last
+        GUICtrlSendMsg($gTaskList, $LB_SETSEL, 1, $i - 1)
+    Next
+    GUICtrlSendMsg($gTaskList, $LB_SETCURSEL, $first - 1, 0)
+
+EndFunc
+
+Func TaskEditor_MoveSelected($dir)
+
+    Local $first, $last
+    If Not TaskEditor_SelectedRange($first, $last) Then Return
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    If $count < 1 Then Return
+
+    If $dir < 0 Then
+        If $first <= 1 Then Return
+        Local $before = $lines[$first - 1]
+        For $i = $first - 1 To $last - 1
+            $lines[$i] = $lines[$i + 1]
+        Next
+        $lines[$last] = $before
+    Else
+        If $last >= $count Then Return
+        Local $after = $lines[$last + 1]
+        For $i = $last + 1 To $first + 1 Step -1
+            $lines[$i] = $lines[$i - 1]
+        Next
+        $lines[$first] = $after
+    EndIf
+
+    TaskWriteLines($lines)
+    TaskEditor_Load()
+    If $dir < 0 Then
+        TaskEditor_SelectRange($first - 1, $last - 1)
+    Else
+        TaskEditor_SelectRange($first + 1, $last + 1)
+    EndIf
+    ReloadRecordList()
+
+EndFunc
+
+Func TaskEditor_AskBlockName()
+
+    Local $pos = WinGetPos($gTaskGui)
+    Local $x = 260
+    Local $y = 260
+    If IsArray($pos) Then
+        $x = $pos[0] + $pos[2] + 6
+        $y = $pos[1] + 42
+    EndIf
+
+    Local $dlg = GUICreate("Block", 166, 76, $x, $y, BitOR($WS_CAPTION, $WS_SYSMENU), $WS_EX_TOOLWINDOW, $gTaskGui)
+    GUICtrlCreateLabel("Name", 8, 10, 42, 16)
+    Local $inp = GUICtrlCreateInput("", 48, 8, 108, 20)
+    Local $ok = GUICtrlCreateButton("OK", 48, 42, 44, 22)
+    Local $cancel = GUICtrlCreateButton("X", 112, 42, 44, 22)
+    GUISetState(@SW_SHOW, $dlg)
+    WinSetOnTop($dlg, "", 1)
+    GUICtrlSetState($inp, $GUI_FOCUS)
+
+    Local $name = ""
+    While 1
+        Local $msg = GUIGetMsg()
+        Switch $msg
+            Case $GUI_EVENT_CLOSE, $cancel
+                ExitLoop
+            Case $ok
+                $name = GUICtrlRead($inp)
+                ExitLoop
+        EndSwitch
+        Sleep(10)
+    WEnd
+
+    GUIDelete($dlg)
+    Return $name
+
+EndFunc
+
+Func TaskEditor_ForkSelected()
+
+    Local $first, $last
+    If Not TaskEditor_SelectedRange($first, $last) Then Return
+    If $first <> $last Then
+        GUICtrlSetData($status, "OneLine")
+        Return
+    EndIf
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    If $first < 1 Or $first > $count Then Return
+
+    Local $forkName = TaskRecordNameFromLine($lines[$first])
+    If $forkName = "" Or Not TaskRecordExists($forkName) Then
+        GUICtrlSetData($status, "NoFork")
+        Return
+    EndIf
+
+    If Not SelectRecordByName($forkName) Then
+        GUICtrlSetData($status, "NoFork")
+        Return
+    EndIf
+
+    CreateForkFromActiveRecord()
+    TaskEditor_Load()
+    TaskEditor_SelectRange($first, $first)
+
+EndFunc
+Func TaskEditor_BlockSelected()
+
+    Local $first, $last
+    If Not TaskEditor_SelectedRange($first, $last) Then Return
+
+    Local $name = TaskEditor_AskBlockName()
+    $name = TaskCleanBlockName($name)
+    If $name = "" Then
+        GUICtrlSetData($status, "Blk name")
+        Return
+    EndIf
+
+    Local $blkFile = TaskBlockPath($name)
+    If FileExists($blkFile) Then
+        GUICtrlSetData($status, "Blk exists")
+        Return
+    EndIf
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    If $count < 1 Then Return
+
+    Local $h = FileOpen($blkFile, 2)
+    If $h = -1 Then Return
+    For $i = $first To $last
+        FileWriteLine($h, $lines[$i])
+    Next
+    FileClose($h)
+
+    Local $new[1]
+    Local $n = 0
+    For $i = 1 To $count
+        If $i = $first Then
+            $n += 1
+            ReDim $new[$n + 1]
+            $new[$n] = $name & ".blk"
+        EndIf
+        If $i >= $first And $i <= $last Then ContinueLoop
+        $n += 1
+        ReDim $new[$n + 1]
+        $new[$n] = $lines[$i]
+    Next
+    $new[0] = $n
+
+    TaskWriteLines($new)
+    TaskEditor_Load()
+    TaskEditor_SelectRange($first, $first)
+    GUICtrlSetData($gTaskNameInput, "")
+    TaskEditor_RefreshSidePanels()
+    GUICtrlSetData($status, "Blk made")
+    ReloadRecordList()
+
+EndFunc
+
+Func TaskEditor_LoadVariables()
+
+    If $gTaskVarList = 0 Then Return
+
+    If $gEnvFile = "" Or Not FileExists($gEnvFile) Then
+        GUICtrlSetData($gTaskVarList, "|", "")
+        Return
+    EndIf
+
+    Local $lines
+    _FileReadToArray($gEnvFile, $lines)
+    If @error Then
+        GUICtrlSetData($gTaskVarList, "|", "")
+        Return
+    EndIf
+
+    Local $data = ""
+    For $i = 1 To $lines[0]
+        Local $line = StringStripWS($lines[$i], 3)
+        If $line = "" Then ContinueLoop
+        If StringLeft($line, 2) = ";=" Then ContinueLoop
+        If StringLeft($line, 1) = ";" Then ContinueLoop
+        If StringLeft($line, 1) = "[" Then ContinueLoop
+        Local $eq = StringInStr($line, "=")
+        If $eq < 2 Then ContinueLoop
+        Local $key = StringStripWS(StringLeft($line, $eq - 1), 3)
+        Local $val = StringStripWS(StringMid($line, $eq + 1), 3)
+        If $key = "" Then ContinueLoop
+        Local $show = $key & " = " & $val
+        If $data = "" Then
+            $data = $show
+        Else
+            $data &= "|" & $show
+        EndIf
+    Next
+
+    GUICtrlSetData($gTaskVarList, "|" & $data, "")
+
+EndFunc
+Func TaskEditor_RefreshSidePanels()
+
+    TaskEditor_LoadBrowsers()
+    TaskEditor_LoadVariables()
+
+EndFunc
+Func TaskEditor_LoadBrowsers()
+
+    If $gTaskRecDir = "" Then $gTaskRecDir = $gMicractsDir
+    If $gTaskBlkDir = "" Then $gTaskBlkDir = $gBlkDir
+    TaskEditor_LoadBrowserList("rec")
+    TaskEditor_LoadBrowserList("blk")
+
+EndFunc
+
+Func TaskEditor_LoadBrowserList($kind)
+
+    Local $ctrl = $gTaskRecList
+    Local $dir = $gTaskRecDir
+    Local $pattern = "*.rec"
+    If $kind = "blk" Then
+        $ctrl = $gTaskBlkList
+        $dir = $gTaskBlkDir
+        $pattern = "*.blk"
+    EndIf
+
+    If $ctrl = 0 Then Return
+    If $dir = "" Or Not FileExists($dir) Then
+        GUICtrlSetData($ctrl, "|", "")
+        Return
+    EndIf
+
+    Local $files = _FileListToArray($dir, $pattern, 1)
+    Local $data = ""
+    If Not @error Then
+        For $i = 1 To $files[0]
+            Local $show = $files[$i]
+            If $kind = "rec" And StringRight(StringLower($show), 4) = ".rec" Then $show = StringTrimRight($show, 4)
+            If $data = "" Then
+                $data = $show
+            Else
+                $data &= "|" & $show
+            EndIf
+        Next
+    EndIf
+
+    GUICtrlSetData($ctrl, "|" & $data, "")
+
+EndFunc
+
+Func TaskEditor_ChooseBrowserFolder($kind)
+
+    Local $start = $gTaskRecDir
+    If $kind = "blk" Then $start = $gTaskBlkDir
+    If $start = "" Then $start = $appPath
+
+    Local $dir = FileSelectFolder("Select " & $kind & " folder", "", 2, $start)
+    If @error Or $dir = "" Then Return
+
+    If $kind = "blk" Then
+        $gTaskBlkDir = $dir
+    Else
+        $gTaskRecDir = $dir
+    EndIf
+    TaskEditor_LoadBrowserList($kind)
+
+EndFunc
+
+Func TaskEditor_LoadBrowserSelection($kind)
+
+    Local $entry = TaskEditor_SelectedBrowserEntry($kind)
+    If $entry <> "" Then GUICtrlSetData($status, "Pick " & $kind)
+
+EndFunc
+
+Func TaskEditor_InsertBrowserSelection($kind)
+
+    Local $entry = TaskEditor_SelectedBrowserEntry($kind)
+    If $entry = "" Then Return
+    TaskEditor_InsertLineAfterSelection($entry)
+
+EndFunc
+
+Func TaskEditor_SelectedBrowserEntry($kind)
+
+    Local $ctrl = $gTaskRecList
+    Local $dir = $gTaskRecDir
+    Local $localDir = $gMicractsDir
+    If $kind = "blk" Then
+        $ctrl = $gTaskBlkList
+        $dir = $gTaskBlkDir
+        $localDir = $gBlkDir
+    EndIf
+
+    If $ctrl = 0 Then Return ""
+    Local $item = StringStripWS(GUICtrlRead($ctrl), 3)
+    If $item = "" Then Return ""
+
+    Local $fileName = $item
+    If $kind = "rec" And StringRight(StringLower($fileName), 4) <> ".rec" Then $fileName &= ".rec"
+    Local $full = $dir & "\" & $fileName
+
+    If StringLower(HR_NormalizePath($dir)) = StringLower(HR_NormalizePath($localDir)) Then
+        If $kind = "rec" Then Return _TaskBrowserBaseName($item)
+        Return _TaskBrowserBaseName($item) & ".blk"
+    EndIf
+
+    Return $full
+
+EndFunc
+
+Func _TaskBrowserBaseName($name)
+
+    Local $base = StringStripWS($name, 3)
+    If StringRight(StringLower($base), 4) = ".rec" Then $base = StringTrimRight($base, 4)
+    If StringRight(StringLower($base), 4) = ".blk" Then $base = StringTrimRight($base, 4)
+    Return $base
+
+EndFunc
+
+Func TaskEditor_InsertLineAfterSelection($entry)
+
+    TaskEditor_SyncLineEdit()
+    Local $first, $last
+    Local $hasSel = TaskEditor_SelectedRange($first, $last)
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    Local $insertAfter = $count
+    If $hasSel Then $insertAfter = $last
+
+    Local $new[1]
+    Local $n = 0
+    If $count < 1 Then
+        ReDim $new[2]
+        $new[0] = 1
+        $new[1] = $entry
+        TaskWriteLines($new)
+        TaskEditor_Load()
+        TaskEditor_SelectRange(1, 1)
+        TaskEditor_LoadSelectedLine()
+        GUICtrlSetData($status, "Inserted")
+        ReloadRecordList()
+        Return
+    EndIf
+
+    For $i = 1 To $count
+        $n += 1
+        ReDim $new[$n + 1]
+        $new[$n] = $lines[$i]
+        If $i = $insertAfter Then
+            $n += 1
+            ReDim $new[$n + 1]
+            $new[$n] = $entry
+        EndIf
+    Next
+    $new[0] = $n
+
+    TaskWriteLines($new)
+    TaskEditor_Load()
+    TaskEditor_SelectRange($insertAfter + 1, $insertAfter + 1)
+    TaskEditor_LoadSelectedLine()
+    GUICtrlSetData($status, "Inserted")
+    ReloadRecordList()
+
+EndFunc
+
+Func TaskEditor_DeleteSelected()
+
+    Local $first, $last
+    If Not TaskEditor_SelectedRange($first, $last) Then Return
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    If $count < 1 Then Return
+
+    Local $new[1]
+    Local $n = 0
+    For $i = 1 To $count
+        If $i >= $first And $i <= $last Then ContinueLoop
+        $n += 1
+        ReDim $new[$n + 1]
+        $new[$n] = $lines[$i]
+    Next
+    $new[0] = $n
+
+    TaskWriteLines($new)
+    TaskEditor_Load()
+    If $n > 0 Then
+        If $first > $n Then $first = $n
+        TaskEditor_SelectRange($first, $first)
+    EndIf
+    ReloadRecordList()
+
+EndFunc
+
+Func UpdateBlinkUI()
+
+    If $gBlinkPauseMs < 120 Then $gBlinkPauseMs = 120
+    If $gBlinkButtonMs < 300 Then $gBlinkButtonMs = 300
+
+    If Not $gBlinkEnabled Then
+        _ResetBlinkUI()
+        Return
+    EndIf
+
+    Local $paused = ($runPaused Or $gRecordPaused)
+
+    If $paused And TimerDiff($gBlinkPauseTimer) >= $gBlinkPauseMs Then
+        $gBlinkPauseOn = Not $gBlinkPauseOn
+        $gBlinkPauseTimer = TimerInit()
+    EndIf
+
+    If $recording And TimerDiff($gBlinkButtonTimer) >= $gBlinkButtonMs Then
+        $gBlinkButtonOn = Not $gBlinkButtonOn
+        $gBlinkButtonTimer = TimerInit()
+    EndIf
+
+    If $paused Then
+        If $gRecordPaused Then
+            _BlinkSetStatusText("RecPause F9=Rec")
+        ElseIf $manualFocusWait Then
+            _BlinkSetStatusText(FocusPauseStatusText())
+        ElseIf $gPatchSavedPrompt Then
+            _BlinkSetStatusText("Saved F9=Run")
+        ElseIf PauseNeedsManualFocusWarning() Then
+            _BlinkSetStatusText(FocusPauseStatusText())
+        Else
+            _BlinkSetStatusText(PauseContinueStatusText())
+        EndIf
+
+        If $gBlinkPauseOn Then
+            _BlinkSetStatusColor(0xD00000)
+        Else
+            _BlinkSetStatusColor(0x000000)
+        EndIf
+    Else
+        _BlinkSetStatusColor(0x000000)
+    EndIf
+
+    _UpdateBlinkControls()
+
+EndFunc
+
+Func _ResetBlinkUI()
+
+    _BlinkSetStatusColor(0x000000)
+    _BlinkSetCommandColor(0x000000)
+    _BlinkSetStartText("Start")
+    _BlinkSetRecText("Rec")
+
+EndFunc
+
+Func _UpdateBlinkControls()
+
+    If $running Or $runPaused Then
+        _BlinkSetStartText("Stop")
+    Else
+        _BlinkSetStartText("Start")
+        _BlinkSetCommandColor(0x000000)
+    EndIf
+
+    If $recording Then
+        If $gBlinkButtonOn Then
+            _BlinkSetRecText("Off")
+        Else
+            _BlinkSetRecText("")
+        EndIf
+    Else
+        _BlinkSetRecText("Rec")
+    EndIf
+
+EndFunc
+
+Func _BlinkSetStatusText($text)
+
+    If $gBlinkLastStatusText = $text And GUICtrlRead($status) = $text Then Return
+    GUICtrlSetData($status, $text)
+    $gBlinkLastStatusText = $text
+
+EndFunc
+
+Func _BlinkSetStatusColor($color)
+
+    If $gBlinkLastStatusColor = $color Then Return
+    GUICtrlSetColor($status, $color)
+    $gBlinkLastStatusColor = $color
+
+EndFunc
+
+Func _BlinkSetCommandColor($color)
+
+    If $gBlinkLastCmdColor = $color Then Return
+    GUICtrlSetColor($cmbCmd, $color)
+    $gBlinkLastCmdColor = $color
+
+EndFunc
+
+Func BlinkActiveRunCommand()
+
+    If $gBlinkLastCmdColor = 0xD00000 Then
+        _BlinkSetCommandColor(0x0080FF)
+    Else
+        _BlinkSetCommandColor(0xD00000)
+    EndIf
+
+EndFunc
+
+Func _BlinkSetStartText($text)
+
+    If $gBlinkLastStartText = $text And GUICtrlRead($btnStart) = $text Then Return
+    GUICtrlSetData($btnStart, $text)
+    $gBlinkLastStartText = $text
+
+EndFunc
+
+Func _BlinkSetRecText($text)
+
+    If $gBlinkLastRecText = $text And GUICtrlRead($btnRec) = $text Then Return
+    GUICtrlSetData($btnRec, $text)
+    $gBlinkLastRecText = $text
+
+EndFunc
+
+Func HR_WM_NCHITTEST($hWnd, $iMsg, $wParam, $lParam)
+
+    Local Const $HTCLIENT = 1
+    Local Const $HTCAPTION = 2
+
+    Local $pos = WinGetPos($gui)
+    If Not IsArray($pos) Then Return $HTCLIENT
+
+    Local $m = MouseGetPos()
+    Local $x = $m[0] - $pos[0]
+    Local $y = $m[1] - $pos[1]
+
+    If $y >= 0 And $y <= 20 And $x >= 0 And $x < 184 Then Return $HTCAPTION
+
+    Return $HTCLIENT
+
+EndFunc
+
+Func HR_ToggleHelp()
+
+    If $gHelpTipVisible Then
+        HR_HideHelp()
+    Else
+        HR_ShowHelp()
+    EndIf
+
+EndFunc
+
+Func HR_ShowHelp()
+
+    Local $pos = WinGetPos($gui)
+    Local $x = 0
+    Local $y = 0
+
+    If IsArray($pos) Then
+        $x = $pos[0] + 8
+        $y = $pos[1] + 24
+    EndIf
+
+    ToolTip( _
+        "HandyRecorder" & @CRLF & _
+        "Copyright (c) 2026 HandyRecorder project" & @CRLF & @CRLF & _
+        CfgReadMultiline("Info", "help", _DefaultHelpText()), _
+        $x, _
+        $y, _
+        "Help")
+
+    $gHelpTipVisible = True
+
+EndFunc
+
+Func HR_HideHelp()
+
+    If Not $gHelpTipVisible Then Return
+
+    ToolTip("")
+    $gHelpTipVisible = False
+
+EndFunc
+
+; =====================================================
+; REVIEW WINDOW
+; Shows zoomed index screenshots. Recording mode is read-only.
+; Idle mode lets the user drag a crop rectangle; on mouse-up the
+; rectangle overwrites the original index PNG and reloads the preview.
+; =====================================================
+
+Func Review_Init()
+
+    _GDIPlus_Startup()
+    $gReviewOverlayFile = @TempDir & "\HR_review_overlay.bmp"
+
+EndFunc
+
+Func Review_Toggle()
+
+    If GUICtrlRead($chkReview) = $GUI_CHECKED Then
+        Review_UpdateFromActive()
+    Else
+        Review_Close()
+    EndIf
+
+EndFunc
+
+Func Review_UpdateFromActive()
+
+    If GUICtrlRead($chkReview) <> $GUI_CHECKED Then Return
+    If $gReviewSyncing Then Return
+
+    Local $line = GUICtrlRead($cmbCmd)
+    If StringStripWS($line, 3) = "" Then Return
+    If $line = $gReviewLine Then Return
+
+    $gReviewLine = $line
+    Local $file = Review_FileFromCommand($line)
+
+    If $file = "" Or Not FileExists($file) Then
+        Review_ShowTextOnly($line)
+        Return
+    EndIf
+
+    Review_ShowFile($file)
+
+EndFunc
+
+Func Review_ShowLatestIndex($file)
+
+    If GUICtrlRead($chkReview) <> $GUI_CHECKED Then Return
+    If Not FileExists($file) Then Return
+
+    $gReviewLine = ""
+    Review_ShowFile($file)
+
+EndFunc
+
+Func Review_ShowTextOnly($line)
+
+    $gReviewFile = ""
+    $gReviewW = 0
+    $gReviewH = 0
+    $gReviewDispW = 0
+    $gReviewDispH = 0
+    $gReviewRectL = 0
+    $gReviewRectT = 0
+    $gReviewRectR = 0
+    $gReviewRectB = 0
+
+    Local $pos = Review_TargetPos()
+    Local $winW = $gReviewMinW
+    Local $showTools = Review_CommandCanRecrop($line)
+    Local $toolH = 0
+    If $showTools Then $toolH = $gReviewSliderH
+
+    If $gReviewGui <> 0 Then GUIDelete($gReviewGui)
+
+    $gReviewGui = GUICreate("Review", $winW, $toolH + $gReviewEditH, $pos[0], $pos[1], BitOR($WS_POPUP, $WS_BORDER), $WS_EX_TOOLWINDOW, $gui)
+    $gReviewPic = 0
+    $gReviewSlider = 0
+    $gReviewAnchorCrop = 0
+    If $showTools Then
+        $gReviewZoom = Review_ZoomRatio()
+        $gReviewSliderValue = Int($gReviewZoom)
+        If $gReviewSliderValue < 1 Then $gReviewSliderValue = 1
+        If $gReviewSliderValue > 4 Then $gReviewSliderValue = 4
+        $gReviewAnchorCrop = GUICtrlCreateRadio("", 4, 5, 18, 18)
+        $gReviewSlider = GUICtrlCreateSlider(24, 0, $winW - 24, $gReviewSliderH, $TBS_AUTOTICKS)
+        GUICtrlSetLimit($gReviewSlider, 4, 1)
+        GUICtrlSetData($gReviewSlider, $gReviewSliderValue)
+    EndIf
+    $gReviewEditText = $line
+    $gReviewEdit = GUICtrlCreateEdit($gReviewEditText, 0, $toolH, $winW, $gReviewEditH, BitOR($ES_MULTILINE, $ES_AUTOVSCROLL, $WS_VSCROLL))
+    If $recording Then GUICtrlSetState($gReviewEdit, $GUI_DISABLE)
+
+    WinSetOnTop($gReviewGui, "", 1)
+    GUISetState(@SW_SHOW, $gReviewGui)
+    $gReviewVisible = True
+
+EndFunc
+
+Func Review_ShowFile($file)
+
+    Local $hImg = _GDIPlus_ImageLoadFromFile($file)
+    If $hImg = 0 Then Return
+
+    Local $w = _GDIPlus_ImageGetWidth($hImg)
+    Local $h = _GDIPlus_ImageGetHeight($hImg)
+    _GDIPlus_ImageDispose($hImg)
+
+    If $w < 1 Or $h < 1 Then Return
+
+    $gReviewFile = $file
+    $gReviewW = $w
+    $gReviewH = $h
+    $gReviewZoom = Review_ZoomRatio()
+    $gReviewSliderValue = Int($gReviewZoom)
+    If $gReviewSliderValue < 1 Then $gReviewSliderValue = 1
+    If $gReviewSliderValue > 4 Then $gReviewSliderValue = 4
+    $gReviewDispW = Int($w * $gReviewZoom)
+    $gReviewDispH = Int($h * $gReviewZoom)
+    If $gReviewDispW < 1 Then $gReviewDispW = 1
+    If $gReviewDispH < 1 Then $gReviewDispH = 1
+    $gReviewRectL = 0
+    $gReviewRectT = 0
+    $gReviewRectR = $w - 1
+    $gReviewRectB = $h - 1
+    Review_LoadScreenRectFromLine()
+
+    Local $pos = Review_TargetPos()
+    Local $winW = $gReviewDispW
+    If $winW < $gReviewMinW Then $winW = $gReviewMinW
+
+    If $gReviewGui <> 0 Then GUIDelete($gReviewGui)
+
+    Review_RenderImage(True)
+
+    $gReviewGui = GUICreate("Review", $winW, $gReviewSliderH + $gReviewDispH + $gReviewEditH, $pos[0], $pos[1], BitOR($WS_POPUP, $WS_BORDER), $WS_EX_TOOLWINDOW, $gui)
+    $gReviewAnchorCrop = GUICtrlCreateRadio("", 4, 5, 18, 18)
+    $gReviewSlider = GUICtrlCreateSlider(24, 0, $winW - 24, $gReviewSliderH, $TBS_AUTOTICKS)
+    GUICtrlSetLimit($gReviewSlider, 4, 1)
+    GUICtrlSetData($gReviewSlider, $gReviewSliderValue)
+    $gReviewPic = GUICtrlCreatePic($gReviewOverlayFile, 0, $gReviewSliderH, $gReviewDispW, $gReviewDispH)
+    $gReviewEditText = GUICtrlRead($cmbCmd)
+    $gReviewEdit = GUICtrlCreateEdit($gReviewEditText, 0, $gReviewSliderH + $gReviewDispH, $winW, $gReviewEditH, BitOR($ES_MULTILINE, $ES_AUTOVSCROLL, $WS_VSCROLL))
+    If $recording Then GUICtrlSetState($gReviewEdit, $GUI_DISABLE)
+    WinSetOnTop($gReviewGui, "", 1)
+    GUISetState(@SW_SHOW, $gReviewGui)
+    $gReviewVisible = True
+
+EndFunc
+
+Func Review_Close()
+
+    If $gReviewGui <> 0 Then GUIDelete($gReviewGui)
+
+    $gReviewGui = 0
+    $gReviewPic = 0
+    $gReviewEdit = 0
+    $gReviewSlider = 0
+    $gReviewAnchorCrop = 0
+    $gReviewVisible = False
+    $gReviewFile = ""
+    $gReviewLine = ""
+    $gReviewEditText = ""
+    $gReviewDrag = False
+
+EndFunc
+
+Func Review_Poll()
+
+    If GUICtrlRead($chkReview) <> $GUI_CHECKED Then Return
+    If Not $gReviewVisible Then Return
+
+    Review_AttachToMain()
+    Review_SyncZoomSlider()
+    Review_SyncEditRem()
+
+    Local $leftDown = _IsPressed("01")
+    If $gReviewW < 1 Or $gReviewH < 1 Then
+        If Not $leftDown Then $gReviewDrag = False
+        Return
+    EndIf
+
+    Local $m = MouseGetPos()
+    Local $pos = WinGetPos($gReviewGui)
+    If Not IsArray($pos) Then Return
+
+    Local $rawX = $m[0] - $pos[0]
+    Local $rawY = $m[1] - $pos[1]
+    Local $imageY = $rawY - $gReviewSliderH
+    Local $insideImage = ($rawX >= 0 And $imageY >= 0 And $rawX < $gReviewDispW And $imageY < $gReviewDispH)
+
+    If Not $insideImage And Not $gReviewDrag Then
+        If Not $leftDown Then $gReviewDrag = False
+        Return
+    EndIf
+
+    Local $x = Review_DisplayToImageX($rawX)
+    Local $y = Review_DisplayToImageY($imageY)
+
+    If $leftDown And Not $gReviewDrag Then
+        If Not $insideImage Then Return
+        $gReviewDrag = True
+        $gReviewStartX = $x
+        $gReviewStartY = $y
+        Review_SetRect($gReviewStartX, $gReviewStartY, $x, $y)
+        Review_RenderImage(True)
+        Return
+    EndIf
+
+    If $leftDown And $gReviewDrag Then
+        Review_SetRect($gReviewStartX, $gReviewStartY, $x, $y)
+        Review_RenderImage(True)
+        Return
+    EndIf
+
+    If Not $leftDown And $gReviewDrag Then
+        $gReviewDrag = False
+        Review_SetRect($gReviewStartX, $gReviewStartY, $x, $y)
+        Review_CommitCrop()
+        Return
+    EndIf
+
+EndFunc
+
+Func Review_Clamp($value, $minValue, $maxValue)
+
+    If $value < $minValue Then Return $minValue
+    If $value > $maxValue Then Return $maxValue
+    Return $value
+
+EndFunc
+
+Func Review_ZoomRatio()
+
+    Local $ratio = Number(CfgRead("Review", "zoom_ratio", "2"))
+    If $ratio < 1 Then $ratio = 1
+    If $ratio > 4 Then $ratio = 4
+    Return $ratio
+
+EndFunc
+
+Func Review_DisplayToImageX($x)
+
+    Local $imgX = Int($x / $gReviewZoom)
+    Return Review_Clamp($imgX, 0, $gReviewW - 1)
+
+EndFunc
+
+Func Review_DisplayToImageY($y)
+
+    Local $imgY = Int($y / $gReviewZoom)
+    Return Review_Clamp($imgY, 0, $gReviewH - 1)
+
+EndFunc
+
+Func Review_TargetPos()
+
+    Local $out[2]
+    $out[0] = 200
+    $out[1] = 200
+
+    Local $pos = WinGetPos($gui)
+    If IsArray($pos) Then
+        $out[0] = $pos[0] + $pos[2]
+        $out[1] = $pos[1]
+    EndIf
+
+    Return $out
+
+EndFunc
+
+Func Review_AttachToMain()
+
+    If $gReviewGui = 0 Then Return
+
+    Local $target = Review_TargetPos()
+    Local $pos = WinGetPos($gReviewGui)
+    If Not IsArray($pos) Then Return
+
+    If $pos[0] <> $target[0] Or $pos[1] <> $target[1] Then
+        WinMove($gReviewGui, "", $target[0], $target[1])
+    EndIf
+
+EndFunc
+
+Func Review_SyncEditRem()
+
+    If $recording Then Return
+    If $gReviewEdit = 0 Then Return
+
+    Local $txt = GUICtrlRead($gReviewEdit)
+    If $txt = $gReviewEditText Then Return
+    $txt = TaskTrimRight($txt)
+    If StringStripWS($txt, 3) = "" Then Return
+
+    If $gActiveIndex >= 1 And $gActiveIndex <= UBound($gCurrLines) - 1 Then
+        $gReviewSyncing = True
+        $gCurrLines[$gActiveIndex] = $txt
+        $gLastVisibleText = $txt
+        _RenderCommands($gActiveIndex)
+        $gReviewSyncing = False
+    EndIf
+
+    $gReviewLine = $txt
+    $gReviewEditText = $txt
+
+EndFunc
+
+Func Review_SyncZoomSlider()
+
+    If $gReviewSlider = 0 Then Return
+    If $gReviewW < 1 Or $gReviewH < 1 Then Return
+
+    Local $value = Int(GUICtrlRead($gReviewSlider))
+    If $value < 1 Then $value = 1
+    If $value > 4 Then $value = 4
+    If $value = $gReviewSliderValue Then Return
+
+    $gReviewSliderValue = $value
+    $gReviewZoom = $value
+    IniWrite($iniFile, "Review", "zoom_ratio", $value)
+
+    Review_ApplyZoomLayout()
+
+EndFunc
+
+Func Review_ApplyZoomLayout()
+
+    If $gReviewGui = 0 Then Return
+    If $gReviewW < 1 Or $gReviewH < 1 Then Return
+
+    $gReviewDispW = Int($gReviewW * $gReviewZoom)
+    $gReviewDispH = Int($gReviewH * $gReviewZoom)
+    If $gReviewDispW < 1 Then $gReviewDispW = 1
+    If $gReviewDispH < 1 Then $gReviewDispH = 1
+
+    Local $winW = $gReviewDispW
+    If $winW < $gReviewMinW Then $winW = $gReviewMinW
+
+    Local $pos = WinGetPos($gReviewGui)
+    If IsArray($pos) Then
+        WinMove($gReviewGui, "", $pos[0], $pos[1], $winW, $gReviewSliderH + $gReviewDispH + $gReviewEditH)
+    EndIf
+
+    If $gReviewAnchorCrop <> 0 Then GUICtrlSetPos($gReviewAnchorCrop, 4, 5, 18, 18)
+    If $gReviewSlider <> 0 Then GUICtrlSetPos($gReviewSlider, 24, 0, $winW - 24, $gReviewSliderH)
+    If $gReviewPic <> 0 Then GUICtrlSetPos($gReviewPic, 0, $gReviewSliderH, $gReviewDispW, $gReviewDispH)
+    If $gReviewEdit <> 0 Then GUICtrlSetPos($gReviewEdit, 0, $gReviewSliderH + $gReviewDispH, $winW, $gReviewEditH)
+
+    Review_RenderImage(True)
+
+EndFunc
+
+Func Review_SetRect($x1, $y1, $x2, $y2)
+
+    $gReviewRectL = $x1
+    $gReviewRectR = $x2
+    If $gReviewRectL > $gReviewRectR Then
+        $gReviewRectL = $x2
+        $gReviewRectR = $x1
+    EndIf
+
+    $gReviewRectT = $y1
+    $gReviewRectB = $y2
+    If $gReviewRectT > $gReviewRectB Then
+        $gReviewRectT = $y2
+        $gReviewRectB = $y1
+    EndIf
+
+    If $gReviewRectR >= $gReviewW Then $gReviewRectR = $gReviewW - 1
+    If $gReviewRectB >= $gReviewH Then $gReviewRectB = $gReviewH - 1
+    If $gReviewRectL < 0 Then $gReviewRectL = 0
+    If $gReviewRectT < 0 Then $gReviewRectT = 0
+
+EndFunc
+
+Func Review_RenderImage($drawRect)
+
+    If $gReviewFile = "" Then Return
+
+    Local $hImg = _GDIPlus_ImageLoadFromFile($gReviewFile)
+    If $hImg = 0 Then Return
+
+    Local $hZoom = _GDIPlus_ImageResize($hImg, $gReviewDispW, $gReviewDispH)
+    _GDIPlus_ImageDispose($hImg)
+    If $hZoom = 0 Then Return
+
+    If $drawRect Then
+        Local $hGraphic = _GDIPlus_ImageGetGraphicsContext($hZoom)
+        Local $hPen = _GDIPlus_PenCreate(0xFFFF0000, 1)
+
+        Review_DrawDashedRect($hGraphic, $hPen, _
+            Int($gReviewRectL * $gReviewZoom), _
+            Int($gReviewRectT * $gReviewZoom), _
+            Int(($gReviewRectR + 1) * $gReviewZoom) - 1, _
+            Int(($gReviewRectB + 1) * $gReviewZoom) - 1)
+
+        _GDIPlus_PenDispose($hPen)
+        _GDIPlus_GraphicsDispose($hGraphic)
+    EndIf
+
+    _GDIPlus_ImageSaveToFile($hZoom, $gReviewOverlayFile)
+    _GDIPlus_ImageDispose($hZoom)
+
+    If $gReviewPic <> 0 Then GUICtrlSetImage($gReviewPic, $gReviewOverlayFile)
+
+EndFunc
+
+Func Review_RenderOverlay()
+
+    Review_RenderImage(True)
+
+EndFunc
+
+Func Review_DrawDashedRect($hGraphic, $hPen, $l, $t, $r, $b)
+
+    Local $dash = 4
+    Local $gap = 3
+
+    For $x = $l To $r Step ($dash + $gap)
+        Local $x2 = $x + $dash
+        If $x2 > $r Then $x2 = $r
+        _GDIPlus_GraphicsDrawLine($hGraphic, $x, $t, $x2, $t, $hPen)
+        _GDIPlus_GraphicsDrawLine($hGraphic, $x, $b, $x2, $b, $hPen)
+    Next
+
+    For $y = $t To $b Step ($dash + $gap)
+        Local $y2 = $y + $dash
+        If $y2 > $b Then $y2 = $b
+        _GDIPlus_GraphicsDrawLine($hGraphic, $l, $y, $l, $y2, $hPen)
+        _GDIPlus_GraphicsDrawLine($hGraphic, $r, $y, $r, $y2, $hPen)
+    Next
+
+EndFunc
+
+Func Review_CommitCrop()
+
+    If $gReviewFile = "" Then Return
+
+    Local $w = $gReviewRectR - $gReviewRectL + 1
+    Local $h = $gReviewRectB - $gReviewRectT + 1
+    If $w < 2 Or $h < 2 Then
+        Review_ShowFile($gReviewFile)
+        Return
+    EndIf
+
+    Local $hImg = _GDIPlus_ImageLoadFromFile($gReviewFile)
+    If $hImg = 0 Then Return
+
+    Local $hCrop = _GDIPlus_BitmapCloneArea($hImg, $gReviewRectL, $gReviewRectT, $w, $h, $GDIP_PXF32ARGB)
+    _GDIPlus_ImageDispose($hImg)
+    If $hCrop = 0 Then Return
+
+    _GDIPlus_ImageSaveToFile($hCrop, $gReviewFile)
+    _GDIPlus_ImageDispose($hCrop)
+
+    Review_UpdateActiveRemAfterCrop()
+    Review_ShowFile($gReviewFile)
+
+EndFunc
+
+Func Review_RecropFromCommandAnchor()
+
+    If $gReviewAnchorCrop <> 0 Then GUICtrlSetState($gReviewAnchorCrop, $GUI_UNCHECKED)
+
+    Review_SyncZoomSlider()
+
+    Local $line = GUICtrlRead($cmbCmd)
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return
+
+    If $gReviewFile = "" Then $gReviewFile = Review_FileFromCommand($line)
+    If $gReviewFile = "" Then Return
+
+    Local $anchor = Review_CommandMousePoint($line)
+    If Not $anchor[0] Then
+        GUICtrlSetData($status, "No anchor")
+        Return
+    EndIf
+
+    Local $ratio = Int($gReviewSliderValue)
+    If $ratio < 1 Then $ratio = 1
+    If $ratio > 4 Then $ratio = 4
+
+    Local $baseW = Number(CfgRead("AutoComment", "crop_w", "80"))
+    Local $baseH = Number(CfgRead("AutoComment", "crop_h", "40"))
+    If $baseW < 2 Then $baseW = 80
+    If $baseH < 2 Then $baseH = 40
+
+    Local $w = Int($baseW * $ratio)
+    Local $h = Int($baseH * $ratio)
+    If $w < 2 Then $w = 2
+    If $h < 2 Then $h = 2
+
+    Local $left = $anchor[1] - Int($w / 2)
+    Local $top = $anchor[2] - Int($h / 2)
+    Local $right = $left + $w - 1
+    Local $bottom = $top + $h - 1
+
+    If $left < 0 Then
+        $right -= $left
+        $left = 0
+    EndIf
+    If $top < 0 Then
+        $bottom -= $top
+        $top = 0
+    EndIf
+    If $right >= @DesktopWidth Then
+        Local $shiftX = $right - @DesktopWidth + 1
+        $left -= $shiftX
+        $right -= $shiftX
+    EndIf
+    If $bottom >= @DesktopHeight Then
+        Local $shiftY = $bottom - @DesktopHeight + 1
+        $top -= $shiftY
+        $bottom -= $shiftY
+    EndIf
+    If $left < 0 Then $left = 0
+    If $top < 0 Then $top = 0
+    If $right < $left Then $right = $left
+    If $bottom < $top Then $bottom = $top
+
+    Review_ApplyScreenRecrop($left, $top, $right, $bottom)
+
+EndFunc
+
+Func Review_ApplyScreenRecrop($left, $top, $right, $bottom)
+
+    Local $line = GUICtrlRead($cmbCmd)
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return
+
+    Local $label = Review_IdxLabelFromRem($rem)
+    If $label = "" Then Return
+    Local $parts = StringSplit($label, "_")
+    If $parts[0] < 1 Then Return
+
+    Local $anchor = Review_CommandMousePoint($line)
+    If Not $anchor[0] Then Return
+
+    Local $baseCount = Review_BaseLabelPartCount($parts)
+    If $baseCount < 1 Then Return
+
+    Local $newLabel = ""
+    For $i = 1 To $baseCount
+        If $i = 1 Then
+            $newLabel = $parts[$i]
+        Else
+            $newLabel &= "_" & $parts[$i]
+        EndIf
+    Next
+
+    Local $dx1 = $left - $anchor[1]
+    Local $dx2 = $right - $anchor[1]
+    Local $dy1 = $top - $anchor[2]
+    Local $dy2 = $bottom - $anchor[2]
+    $newLabel &= "_x" & $dx1 & "~" & $dx2 & "_y" & $dy1 & "~" & $dy2
+
+    Local $oldFile = $gReviewFile
+    Local $newFile = $appPath & "\index\" & $newLabel & ".png"
+
+    _CaptureCropRect($newFile, $left, $top, $right, $bottom)
+    If $newFile <> $oldFile And FileExists($oldFile) Then FileDelete($oldFile)
+
+    Local $newLine = Review_ReplaceIdxLabelInCommand($line, $newLabel)
+    If $gActiveIndex >= 1 And $gActiveIndex <= UBound($gCurrLines) - 1 Then
+        $gReviewSyncing = True
+        $gCurrLines[$gActiveIndex] = $newLine
+        $gLastVisibleText = $newLine
+        _RenderCommands($gActiveIndex)
+        $gReviewSyncing = False
+    EndIf
+
+    $gReviewLine = $newLine
+    $gReviewEditText = $newLine
+    If $gReviewEdit <> 0 Then GUICtrlSetData($gReviewEdit, $gReviewEditText)
+    $gReviewScreenL = $left
+    $gReviewScreenT = $top
+    $gReviewScreenR = $right
+    $gReviewScreenB = $bottom
+    $gReviewFile = $newFile
+
+    $gReviewZoom = 1
+    $gReviewSliderValue = 1
+    IniWrite($iniFile, "Review", "zoom_ratio", "1")
+
+    Review_ShowFile($newFile)
+
+EndFunc
+
+Func Review_LoadScreenRectFromLine()
+
+    $gReviewScreenL = 0
+    $gReviewScreenT = 0
+    $gReviewScreenR = $gReviewW - 1
+    $gReviewScreenB = $gReviewH - 1
+
+    Local $line = GUICtrlRead($cmbCmd)
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return
+
+    Local $label = Review_IdxLabelFromRem($rem)
+    If $label = "" Then Return
+    Local $parts = StringSplit($label, "_")
+    If $parts[0] < 4 Then Return
+
+    Local $anchor = Review_CommandMousePoint($line)
+    Local $xyIdx = Review_XYTokenIndex($parts)
+    Local $cropIdx = Review_CropTokenIndex($parts)
+
+    If $xyIdx > 0 And $anchor[0] Then
+        Local $xPair = StringSplit(StringTrimLeft($parts[$xyIdx], 1), "~")
+        Local $yPair = StringSplit(StringTrimLeft($parts[$xyIdx + 1], 1), "~")
+        If $xPair[0] = 2 And $yPair[0] = 2 Then
+            $gReviewScreenL = $anchor[1] + Number($xPair[1])
+            $gReviewScreenR = $anchor[1] + Number($xPair[2])
+            $gReviewScreenT = $anchor[2] + Number($yPair[1])
+            $gReviewScreenB = $anchor[2] + Number($yPair[2])
+            Return
+        EndIf
+    EndIf
+
+    If $cropIdx > 0 And $anchor[0] Then
+        Local $p1 = StringSplit($parts[$cropIdx + 1], "~")
+        Local $p2 = StringSplit($parts[$cropIdx + 2], "~")
+        If $p1[0] = 2 And $p2[0] = 2 Then
+            $gReviewScreenL = $anchor[1] + Number($p1[1])
+            $gReviewScreenT = $anchor[2] + Number($p1[2])
+            $gReviewScreenR = $anchor[1] + Number($p2[1])
+            $gReviewScreenB = $anchor[2] + Number($p2[2])
+            Return
+        EndIf
+    EndIf
+
+    Local $left = Number($parts[$parts[0] - 3])
+    Local $top = Number($parts[$parts[0] - 2])
+    Local $right = Number($parts[$parts[0] - 1])
+    Local $bottom = Number($parts[$parts[0]])
+
+    If $right < $left Or $bottom < $top Then Return
+
+    $gReviewScreenL = $left
+    $gReviewScreenT = $top
+    $gReviewScreenR = $right
+    $gReviewScreenB = $bottom
+
+EndFunc
+
+Func Review_UpdateActiveRemAfterCrop()
+
+    Local $line = GUICtrlRead($cmbCmd)
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return
+
+    Local $label = Review_IdxLabelFromRem($rem)
+    If $label = "" Then Return
+    Local $parts = StringSplit($label, "_")
+    If $parts[0] < 1 Then Return
+
+    Local $newLeft = $gReviewScreenL + $gReviewRectL
+    Local $newTop = $gReviewScreenT + $gReviewRectT
+    Local $newRight = $gReviewScreenL + $gReviewRectR
+    Local $newBottom = $gReviewScreenT + $gReviewRectB
+    Local $anchor = Review_CommandMousePoint($line)
+    If Not $anchor[0] Then Return
+
+    Local $dx1 = $newLeft - $anchor[1]
+    Local $dy1 = $newTop - $anchor[2]
+    Local $dx2 = $newRight - $anchor[1]
+    Local $dy2 = $newBottom - $anchor[2]
+
+    Local $baseCount = Review_BaseLabelPartCount($parts)
+    If $baseCount < 1 Then Return
+
+    Local $newLabel = ""
+    For $i = 1 To $baseCount
+        If $i = 1 Then
+            $newLabel = $parts[$i]
+        Else
+            $newLabel &= "_" & $parts[$i]
+        EndIf
+    Next
+
+    If $newLabel = "" Then Return
+
+    $newLabel &= "_x" & $dx1 & "~" & $dx2 & "_y" & $dy1 & "~" & $dy2
+
+    Local $newFile = $appPath & "\index\" & $newLabel & ".png"
+    If $newFile <> $gReviewFile Then
+        FileMove($gReviewFile, $newFile, 9)
+        $gReviewFile = $newFile
+    EndIf
+
+    Local $newLine = Review_ReplaceIdxLabelInCommand($line, $newLabel)
+    If $gActiveIndex >= 1 And $gActiveIndex <= UBound($gCurrLines) - 1 Then
+        $gReviewSyncing = True
+        $gCurrLines[$gActiveIndex] = $newLine
+        $gLastVisibleText = $newLine
+        _RenderCommands($gActiveIndex)
+        $gReviewSyncing = False
+    EndIf
+
+    $gReviewLine = $newLine
+    $gReviewEditText = $newLine
+    If $gReviewEdit <> 0 Then GUICtrlSetData($gReviewEdit, $gReviewEditText)
+    $gReviewScreenL = $newLeft
+    $gReviewScreenT = $newTop
+    $gReviewScreenR = $newRight
+    $gReviewScreenB = $newBottom
+
+EndFunc
+
+Func Review_CommandMousePoint($line)
+
+    Local $out[3]
+    $out[0] = False
+    $out[1] = 0
+    $out[2] = 0
+
+    Local $p = StringSplit($line, ",")
+    If $p[0] < 3 Then Return $out
+
+    Local $cmd = $p[1]
+
+    If StringLeft($cmd, 7) = "Anchor_" Then
+        Local $xPair = StringSplit($p[2], "~")
+        Local $yPair = StringSplit($p[3], "~")
+        If $xPair[0] >= 1 And $yPair[0] >= 1 Then
+            $out[0] = True
+            $out[1] = Number($xPair[1])
+            $out[2] = Number($yPair[1])
+        EndIf
+        Return $out
+    EndIf
+
+    If StringLeft($cmd, 4) = "MSM_" Then
+        Local $msmStep = Review_OffsetStepNumber($cmd)
+
+        If $msmStep = 1 Then
+            $out[0] = True
+            $out[1] = Number($p[2])
+            $out[2] = Number($p[3])
+            Return $out
+        EndIf
+
+        Local $msmBase = Review_OffsetBaseForCurrentLine($cmd)
+        If $msmBase[0] Then
+            $out[0] = True
+            $out[1] = $msmBase[1] + Number($p[2])
+            $out[2] = $msmBase[2] + Number($p[3])
+            Return $out
+        EndIf
+
+        Return $out
+    EndIf
+
+    If StringLeft($cmd, 4) = "MSP_" Then
+        Local $mspStep = Review_OffsetStepNumber($cmd)
+        Local $mspBase = Review_OffsetBaseForCurrentLine($cmd)
+
+        If $mspBase[0] And ($mspStep > 1 Or $mspBase[3]) Then
+            $out[0] = True
+            $out[1] = $mspBase[1] + Number($p[2])
+            $out[2] = $mspBase[2] + Number($p[3])
+            Return $out
+        EndIf
+
+        $out[0] = True
+        $out[1] = Number($p[2])
+        $out[2] = Number($p[3])
+        Return $out
+    EndIf
+
+    If StringLeft($cmd, 2) = "M_" Or StringLeft($cmd, 3) = "MM_" Then
+        $out[0] = True
+        $out[1] = Number($p[2])
+        $out[2] = Number($p[3])
+        Return $out
+    EndIf
+
+    If StringLeft($cmd, 3) = "MD_" Then
+        Local $xPair = StringSplit($p[2], "~")
+        Local $yPair = StringSplit($p[3], "~")
+        If $xPair[0] >= 1 And $yPair[0] >= 1 Then
+            $out[0] = True
+            $out[1] = Number($xPair[1])
+            $out[2] = Number($yPair[1])
+        EndIf
+    EndIf
+
+    Return $out
+
+EndFunc
+
+Func Review_OffsetBaseForCurrentLine($cmd)
+
+    Local $out[4]
+    $out[0] = False
+    $out[1] = 0
+    $out[2] = 0
+    $out[3] = False
+
+    Local $group = Review_OffsetGroupNumber($cmd)
+    If $group < 1 Then Return $out
+
+    Local $startIdx = $gActiveIndex
+    If $startIdx < 1 Then $startIdx = UBound($gCurrLines) - 1
+    If $startIdx > UBound($gCurrLines) - 1 Then $startIdx = UBound($gCurrLines) - 1
+
+    Local $fallbackFound = False
+    Local $fallbackX = 0
+    Local $fallbackY = 0
+
+    For $i = $startIdx - 1 To 1 Step -1
+        Local $prev = StringStripWS($gCurrLines[$i], 3)
+        If StringLeft($prev, StringLen(";= Offset Start")) = ";= Offset Start" Then ExitLoop
+
+        Local $p = StringSplit($prev, ",")
+        If $p[0] < 3 Then ContinueLoop
+
+        Local $prevCmd = $p[1]
+        If Review_OffsetGroupNumber($prevCmd) <> $group Then ContinueLoop
+        If Review_OffsetStepNumber($prevCmd) <> 1 Then ContinueLoop
+
+        If StringLeft($prevCmd, 4) = "MSM_" Then
+            $out[0] = True
+            $out[1] = Number($p[2])
+            $out[2] = Number($p[3])
+            $out[3] = True
+            Return $out
+        EndIf
+
+        If StringLeft($prevCmd, 4) = "MSP_" And Not $fallbackFound Then
+            $fallbackFound = True
+            $fallbackX = Number($p[2])
+            $fallbackY = Number($p[3])
+        EndIf
+    Next
+
+    If $fallbackFound Then
+        $out[0] = True
+        $out[1] = $fallbackX
+        $out[2] = $fallbackY
+    EndIf
+
+    Return $out
+
+EndFunc
+
+Func Review_OffsetGroupNumber($cmd)
+
+    Local $parts = StringSplit($cmd, "_")
+    If $parts[0] >= 3 Then Return Number($parts[2])
+    Return 0
+
+EndFunc
+
+Func Review_OffsetStepNumber($cmd)
+
+    Local $parts = StringSplit($cmd, "_")
+    If $parts[0] >= 3 Then Return Number($parts[3])
+    If $parts[0] = 2 Then Return Number($parts[2])
+    Return 0
+
+EndFunc
+
+Func Review_CommandCanRecrop($line)
+
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return False
+
+    Local $anchor = Review_CommandMousePoint($line)
+    Return $anchor[0]
+
+EndFunc
+
+Func Review_CropTokenIndex(ByRef $parts)
+
+    If $parts[0] < 3 Then Return 0
+
+    For $i = 1 To $parts[0] - 2
+        If $parts[$i] = "crop" Then
+            If StringInStr($parts[$i + 1], "~") > 0 And StringInStr($parts[$i + 2], "~") > 0 Then Return $i
+        EndIf
+    Next
+
+    Return 0
+
+EndFunc
+
+Func Review_XYTokenIndex(ByRef $parts)
+
+    If $parts[0] < 2 Then Return 0
+
+    For $i = 1 To $parts[0] - 1
+        If StringLeft($parts[$i], 1) = "x" And StringLeft($parts[$i + 1], 1) = "y" Then
+            If StringInStr($parts[$i], "~") > 0 And StringInStr($parts[$i + 1], "~") > 0 Then Return $i
+        EndIf
+    Next
+
+    Return 0
+
+EndFunc
+
+Func Review_BaseLabelPartCount(ByRef $parts)
+
+    Local $xyIdx = Review_XYTokenIndex($parts)
+    If $xyIdx > 1 Then Return $xyIdx - 1
+
+    Local $cropIdx = Review_CropTokenIndex($parts)
+    If $cropIdx > 1 Then Return $cropIdx - 1
+
+    If $parts[0] >= 4 _
+        And Review_IsIntegerToken($parts[$parts[0] - 3]) _
+        And Review_IsIntegerToken($parts[$parts[0] - 2]) _
+        And Review_IsIntegerToken($parts[$parts[0] - 1]) _
+        And Review_IsIntegerToken($parts[$parts[0]]) Then
+
+        Return $parts[0] - 4
+    EndIf
+
+    Return $parts[0]
+
+EndFunc
+
+Func Review_IsIntegerToken($text)
+
+    If StringRegExp($text, "^-?[0-9]+$") Then Return True
+    Return False
+
+EndFunc
+
+Func Review_IdxLabelFromRem($rem)
+
+    If StringLeft($rem, 4) <> "rem_" Then Return ""
+
+    Local $body = StringTrimLeft($rem, 4)
+    Local $m = StringRegExp($body, '(idx_[A-Za-z0-9~\-]+(?:_[A-Za-z0-9~\-]+)*)', 1)
+    If @error Or Not IsArray($m) Then Return ""
+    Return $m[0]
+
+EndFunc
+
+Func Review_ReplaceIdxLabelInCommand($line, $newLabel)
+
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return $line
+
+    Local $body = StringTrimLeft($rem, 4)
+    If StringRegExp($body, 'idx_[A-Za-z0-9~\-]+(?:_[A-Za-z0-9~\-]+)*') Then
+        $body = StringRegExpReplace($body, 'idx_[A-Za-z0-9~\-]+(?:_[A-Za-z0-9~\-]+)*', $newLabel, 1)
+    ElseIf $body = "" Then
+        $body = $newLabel
+    Else
+        $body &= ' ' & $newLabel
+    EndIf
+
+    Return Review_ReplaceRemInCommand($line, 'rem_' & $body)
+
+EndFunc
+Func Review_FileFromCommand($line)
+
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return ""
+
+    Local $label = Review_IdxLabelFromRem($rem)
+    If $label = "" Then Return ""
+
+    Return $appPath & "\index\" & $label & ".png"
+
+EndFunc
+
+Func Review_RemFromCommand($line)
+
+    Local $p = StringSplit($line, ",")
+    If $p[0] < 1 Then Return ""
+
+    Local $remIdx = Review_RemFieldIndex($p[1])
+    If $remIdx < 1 Or $p[0] < $remIdx Then Return ""
+
+    Local $rem = ""
+    For $i = $remIdx To $p[0]
+        If $i = $remIdx Then
+            $rem = $p[$i]
+        Else
+            $rem &= "," & $p[$i]
+        EndIf
+    Next
+
+    $rem = StringStripWS($rem, 3)
+
+    Return $rem
+
+EndFunc
+
+Func Review_ReplaceRemInCommand($line, $newRem)
+
+    Local $p = StringSplit($line, ",")
+    If $p[0] < 2 Then Return $line
+
+    $newRem = Review_NormalizeRemText($newRem)
+
+    Local $remIdx = Review_RemFieldIndex($p[1])
+    If $remIdx < 2 Then Return $line
+
+    Local $out = ""
+    For $i = 1 To $remIdx - 1
+        Local $val = ""
+        If $i <= $p[0] Then $val = $p[$i]
+
+        If $i = 1 Then
+            $out = $val
+        Else
+            $out &= "," & $val
+        EndIf
+    Next
+
+    If $out = "" Then Return $newRem
+
+    Return $out & "," & $newRem
+
+EndFunc
+
+Func Review_RemFieldIndex($cmd)
+
+    If StringLeft($cmd, 2) = "M_" Then Return 7
+    If StringLeft($cmd, 4) = "MSP_" Then Return 7
+    If StringLeft($cmd, 4) = "MSM_" Then Return 7
+    If StringLeft($cmd, 7) = "Anchor_" Then Return 7
+    If StringLeft($cmd, 3) = "MD_" Then Return 7
+    If StringLeft($cmd, 3) = "MM_" Then Return 7
+    If StringLeft($cmd, 2) = "K_" Then Return 5
+    If StringLeft($cmd, 2) = "S_" Then Return 5
+    If StringLeft($cmd, 3) = "MW_" Then Return 5
+    If StringLeft($cmd, 2) = "P_" Then Return 5
+    If StringLeft($cmd, 2) = "T_" Then Return 5
+
+    Return 0
+
+EndFunc
+
+Func Review_NormalizeRemText($text)
+
+    $text = StringReplace($text, @CRLF, " ")
+    $text = StringReplace($text, @CR, " ")
+    $text = StringReplace($text, @LF, " ")
+    $text = StringStripWS($text, 3)
+
+    If $text = "" Then $text = "rem_"
+
+    Return $text
+
+EndFunc
+
+Func _MouseInsideReviewWindow()
+
+    If $gReviewGui = 0 Then Return False
+
+    Local $pos = WinGetPos($gReviewGui)
+    If Not IsArray($pos) Then Return False
+
+    Local $m = MouseGetPos()
+
+    If $m[0] >= $pos[0] _
+        And $m[0] <= ($pos[0] + $pos[2]) _
+        And $m[1] >= $pos[1] _
+        And $m[1] <= ($pos[1] + $pos[3]) Then
+
+        Return True
+
+    EndIf
+
+    Return False
+
+EndFunc
+
+
+
+
+
+
+
+
+
+
+
+; =========================
+; V1.9 VARIABLE PROMOTION UI
+; =========================
+
+Func VarOpenPopup()
+
+    _SyncActiveFromUI()
+
+    Local $idx = _FindActiveIndex()
+    If $idx < 1 Or $idx > UBound($gCurrLines) - 1 Then
+        GUICtrlSetData($status, "NoCmd")
+        Return
+    EndIf
+
+    Local $line = $gCurrLines[$idx]
+    If StringStripWS($line, 3) = "" Or StringLeft(StringStripWS($line, 3), 2) = ";=" Then
+        GUICtrlSetData($status, "NoCmd")
+        Return
+    EndIf
+
+    VarBuildCandidates($line, $idx)
+    If $gVarCandCount < 1 Then
+        GUICtrlSetData($status, "NoVar")
+        Return
+    EndIf
+    Local $pos = WinGetPos($gui)
+    Local $x = $pos[0] + $pos[2] + 4
+    Local $h = 54 + ($gVarCandCount * 28)
+    If $h > 420 Then $h = 420
+    Local $y = $pos[1] + $pos[3] - $h
+    If $y < 0 Then $y = 0
+
+    Local $vGui = GUICreate("VAR", 270, $h, $x, $y, $WS_POPUPWINDOW, $WS_EX_TOPMOST, $gui)
+    Local $btns[$gVarCandCount + 1]
+    Local $nameInputs[$gVarCandCount + 1]
+    Local $valueInputs[$gVarCandCount + 1]
+
+    GUICtrlCreateLabel("$", 6, 8, 12, 16)
+    GUICtrlCreateLabel("Name", 23, 8, 50, 16)
+    GUICtrlCreateLabel("Value", 128, 8, 36, 16)
+    GUICtrlCreateLabel("Type", 200, 8, 28, 16)
+
+
+    For $i = 1 To $gVarCandCount
+        Local $rowY = 26 + (($i - 1) * 28)
+        $btns[$i] = GUICtrlCreateButton("$", 6, $rowY - 1, 14, 22)
+        $nameInputs[$i] = GUICtrlCreateInput($gVarCandName[$i], 23, $rowY, 100, 20)
+        Local $valueText = $gVarCandV1[$i]
+        If $gVarCandV2[$i] <> "" Then $valueText &= "," & $gVarCandV2[$i]
+        $valueInputs[$i] = GUICtrlCreateInput($valueText, 128, $rowY, 67, 20)
+        GUICtrlCreateLabel(VarShortTypeLabel($gVarCandLabel[$i], $gVarCandType[$i]), 200, $rowY + 4, 26, 16)
+    Next
+
+    Local $btnClose = GUICtrlCreateButton("X", 248, $h - 26, 20, 22)
+
+    GUISetState(@SW_SHOW, $vGui)
+    While 1
+        Local $msgInfo = GUIGetMsg(1)
+        Local $msg = $msgInfo[0]
+        Local $hWnd = $msgInfo[1]
+
+        If $hWnd = $vGui Then
+            If $msg = $GUI_EVENT_CLOSE Or $msg = $btnClose Then ExitLoop
+
+            For $i = 1 To $gVarCandCount
+                If $msg = $btns[$i] Then
+                    VarCandidateSetValueFromText($i, GUICtrlRead($valueInputs[$i]))
+                    If VarPromoteCandidate($idx, $i, GUICtrlRead($nameInputs[$i])) Then ExitLoop 2
+                EndIf
+            Next
+        ElseIf $hWnd = $gui Then
+            Switch $msg
+                Case $cmbCmd
+                    UpdateActiveIndexOnly()
+                    Review_UpdateFromActive()
+                    GUIDelete($vGui)
+                    VarOpenPopup()
+                    Return
+                Case $cmbFiles
+                    Local $f = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+                    If $f <> "" Then
+                        $currentFile = RecordPath($f)
+                        If FileExists($currentFile) Then
+                            $gLoadedRecordName = _CleanRecordName($f)
+                            LoadCommands($currentFile)
+                            Review_UpdateFromActive()
+                        Else
+                            GUICtrlSetData($status, "NoFile")
+                        EndIf
+                    EndIf
+                    GUIDelete($vGui)
+                    VarOpenPopup()
+                    Return
+            EndSwitch
+        EndIf
+
+        Sleep(20)
+    WEnd
+
+    GUIDelete($vGui)
+    If HR_DebugMode() Then VarDebugShowCompiled()
+
+EndFunc
+
+Func VarCandidateSetValueFromText($cand, $text)
+
+    $text = StringStripWS($text, 3)
+    If $gVarCandType[$cand] = "pair" Or $gVarCandType[$cand] = "pair_field" Then
+        Local $p = StringSplit($text, ",")
+        If $p[0] >= 2 Then
+            $gVarCandV1[$cand] = StringStripWS($p[1], 3)
+            $gVarCandV2[$cand] = StringStripWS($p[2], 3)
+            Return
+        EndIf
+    EndIf
+
+    $gVarCandV1[$cand] = $text
+    $gVarCandV2[$cand] = ""
+
+EndFunc
+Func _VarCandV2Text($i)
+
+    If $gVarCandV2[$i] = "" Then Return ""
+    Return "," & $gVarCandV2[$i]
+
+EndFunc
+
+Func VarCandidateIndexFromList($text)
+
+    Local $sp = StringSplit(StringStripWS($text, 3), " ")
+    If $sp[0] < 1 Then Return 0
+    Local $n = Number($sp[1])
+    If $n < 1 Or $n > $gVarCandCount Then Return 0
+    Return $n
+
+EndFunc
+
+Func VarShortTypeLabel($label, $type)
+
+    Switch $label
+        Case "enable"
+            Return "on"
+        Case "seconds"
+            Return "sec"
+        Case "delay"
+            Return "sec"
+        Case "instruction"
+            Return "str"
+        Case "text"
+            Return "str"
+        Case "pos"
+            Return "pos"
+        Case "start_pos"
+            Return "p1"
+        Case "end_pos"
+            Return "p2"
+        Case "repeat"
+            Return "n"
+    EndSwitch
+
+    Switch $type
+        Case "pair", "pair_field"
+            Return "pos"
+        Case "scalar"
+            Return "val"
+        Case "enable"
+            Return "on"
+    EndSwitch
+
+    Return ""
+
+EndFunc
+
+Func VarPauseInstructionDefault($line)
+
+    Local $body = VarPauseRemBody($line)
+    If $body = "" Then Return ""
+
+    If StringLeft($body, 5) = "pause" Then $body = StringStripWS(StringTrimLeft($body, 5), 3)
+    Local $m = StringRegExp($body, '^<([^<>]+)>$', 1)
+    If IsArray($m) And UBound($m) > 0 Then Return $m[0]
+
+    Return $body
+
+EndFunc
+
+Func VarPauseRemBody($line)
+
+    Local $rem = Review_RemFromCommand($line)
+    If StringLeft($rem, 4) <> "rem_" Then Return ""
+    Return StringTrimLeft($rem, 4)
+
+EndFunc
+
+Func VarPauseValueToRem($line, $value)
+
+    $value = StringStripWS($value, 3)
+    Local $cmd = _CsvField($line, 1)
+
+    If StringLeft($cmd, 3) = "P_P" Then
+        If $value = "" Then Return "rem_pause"
+        If StringLeft($value, 1) = "<" And StringRight($value, 1) = ">" Then Return "rem_pause" & $value
+        Return "rem_pause<" & $value & ">"
+    EndIf
+
+    If $value = "" Then Return "rem_"
+    If StringInStr($value, "<") > 0 And StringInStr($value, ">") > 0 Then Return "rem_" & $value
+    Return "rem_<" & $value & ">"
+
+EndFunc
+Func VarBuildCandidates($line, $idx)
+
+    $gVarCandCount = 0
+    Local $cmd = _CsvField($line, 1)
+
+    VarAddCandidate("enable", "enable_" & $idx, "1", "", 0, 0, "enable")
+
+    If StringLeft($cmd, 2) = "M_" And StringLeft($cmd, 3) <> "MD_" Then
+        VarAddCandidate("pos", "pos_" & $idx, _CsvField($line, 2), _CsvField($line, 3), 2, 3, "pair")
+        VarAddCandidate("repeat", "repeat_" & $idx, _CsvField($line, 5), "", 5, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 6), "", 6, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 3) = "MM_" Then
+        VarAddCandidate("pos", "pos_" & $idx, _CsvField($line, 2), _CsvField($line, 3), 2, 3, "pair")
+        VarAddCandidate("repeat", "repeat_" & $idx, _CsvField($line, 5), "", 5, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 6), "", 6, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 4) = "MSP_" Or StringLeft($cmd, 4) = "MSM_" Then
+        VarAddCandidate("pos", "pos_" & $idx, _CsvField($line, 2), _CsvField($line, 3), 2, 3, "pair")
+        VarAddCandidate("repeat", "repeat_" & $idx, _CsvField($line, 5), "", 5, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 6), "", 6, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 3) = "MD_" Then
+        VarAddPairFieldCandidate("start_pos", "start_pos_" & $idx, _CsvField($line, 2), 2)
+        VarAddPairFieldCandidate("end_pos", "end_pos_" & $idx, _CsvField($line, 3), 3)
+        VarAddCandidate("repeat", "repeat_" & $idx, _CsvField($line, 5), "", 5, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 6), "", 6, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 7) = "Anchor_" Then
+        VarAddPairFieldCandidate("start_pos", "start_pos_" & $idx, _CsvField($line, 2), 2)
+        VarAddPairFieldCandidate("end_pos", "end_pos_" & $idx, _CsvField($line, 3), 3)
+        VarAddCandidate("repeat", "repeat_" & $idx, _CsvField($line, 5), "", 5, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 6), "", 6, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 2) = "K_" Then
+        VarAddCandidate("repeat", "repeat_" & $idx, _CsvField($line, 3), "", 3, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 4), "", 4, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 2) = "S_" Then
+        VarAddCandidate("text", "text_" & $idx, _CsvField($line, 2), "", 2, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 4), "", 4, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 3) = "MW_" Then
+        VarAddCandidate("repeat", "repeat_" & $idx, _CsvField($line, 3), "", 3, 0, "scalar")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 4), "", 4, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 2) = "P_" Then
+        VarAddCandidate("instruction", "pause_text_" & $idx, VarPauseInstructionDefault($line), "", 7, 0, "pause_rem")
+        VarAddCandidate("delay", "delay_" & $idx, _CsvField($line, 4), "", 4, 0, "scalar")
+        Return
+    EndIf
+
+    If StringLeft($cmd, 2) = "T_" Then
+        VarAddCandidate("seconds", "seconds_" & $idx, _CsvField($line, 2), "", 2, 0, "scalar")
+        Return
+    EndIf
+
+EndFunc
+Func VarAddPairFieldCandidate($label, $name, $fieldValue, $fieldIndex)
+
+    Local $p = StringSplit($fieldValue, "~")
+    If $p[0] >= 2 Then
+        VarAddCandidate($label, $name, $p[1], $p[2], $fieldIndex, 0, "pair_field")
+    Else
+        VarAddCandidate($label, $name, $fieldValue, "", $fieldIndex, 0, "scalar")
+    EndIf
+
+EndFunc
+Func VarAddCandidate($label, $name, $v1, $v2, $field1, $field2, $type)
+
+    If $gVarCandCount >= UBound($gVarCandLabel) - 1 Then Return
+    $gVarCandCount += 1
+    $gVarCandLabel[$gVarCandCount] = $label
+    $gVarCandName[$gVarCandCount] = $name
+    $gVarCandV1[$gVarCandCount] = VarUnquote($v1)
+    $gVarCandV2[$gVarCandCount] = VarUnquote($v2)
+    $gVarCandF1[$gVarCandCount] = $field1
+    $gVarCandF2[$gVarCandCount] = $field2
+    $gVarCandType[$gVarCandCount] = $type
+
+EndFunc
+
+Func VarPromoteCandidate($idx, $cand, $name)
+
+    $name = StringStripWS($name, 3)
+    If StringLeft($name, 1) = "$" Then $name = StringTrimLeft($name, 1)
+    If $name = "" Then Return False
+    If Not StringRegExp($name, "^[A-Za-z_][A-Za-z0-9_]*$") Then
+        GUICtrlSetData($status, "BadVarName")
+        Return False
+    EndIf
+
+    Local $scope = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    If $scope = "" Then $scope = $gLoadedRecordName
+    If $scope = "" Then Return False
+
+    Local $storeType = $gVarCandType[$cand]
+    If $storeType = "pause_rem" Then $storeType = "scalar"
+    If Not VarEnvAddVariable($scope, $name, $gVarCandV1[$cand], $gVarCandV2[$cand], $storeType) Then Return False
+
+    Local $line = $gCurrLines[$idx]
+    If $gVarCandType[$cand] = "pair" Then
+        $line = VarSetCommandField($line, $gVarCandF1[$cand], "$" & $name & "[1]")
+        $line = VarSetCommandField($line, $gVarCandF2[$cand], "$" & $name & "[2]")
+    ElseIf $gVarCandType[$cand] = "pair_field" Then
+        $line = VarSetCommandField($line, $gVarCandF1[$cand], "$" & $name & "[1]~$" & $name & "[2]")
+    ElseIf $gVarCandType[$cand] = "pause_rem" Then
+        $line = Review_ReplaceRemInCommand($line, VarPauseValueToRem($line, $gVarCandV1[$cand]))
+    Else
+        $line = VarSetCommandField($line, $gVarCandF1[$cand], "$" & $name)
+    EndIf
+
+    $gCurrLines[$idx] = $line
+    $gActiveIndex = $idx
+    $gLastVisibleText = $line
+    VarCompileCommands()
+    _RenderCommands($idx)
+    SaveCurrentData()
+    GUICtrlSetData($status, "VarSaved")
+    Return True
+
+EndFunc
+
+Func VarSetCommandField($line, $fieldIndex, $newValue)
+
+    Local $cmd = _CsvField($line, 1)
+    Local $count = VarCommandPreRemCount($cmd)
+    If $fieldIndex < 1 Or $fieldIndex > $count Then Return $line
+
+    Local $out = ""
+    For $i = 1 To $count
+        Local $value = _CsvField($line, $i)
+        If $i = $fieldIndex Then $value = $newValue
+        If $i = 1 Then
+            $out = $value
+        Else
+            $out &= "," & $value
+        EndIf
+    Next
+
+    Local $rem = _CommandRemTail($line, "")
+    If $rem <> "" Then $out &= "," & $rem
+    Return $out
+
+EndFunc
+
+Func VarCommandPreRemCount($cmd)
+
+    If StringLeft($cmd, 2) = "M_" Or StringLeft($cmd, 3) = "MM_" Or StringLeft($cmd, 3) = "MD_" Or StringLeft($cmd, 4) = "MSP_" Or StringLeft($cmd, 4) = "MSM_" Or StringLeft($cmd, 7) = "Anchor_" Then Return 6
+    Return 4
+
+EndFunc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

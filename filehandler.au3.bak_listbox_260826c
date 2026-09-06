@@ -1,0 +1,3193 @@
+#include <File.au3>
+
+Global $cmbCmd
+Global $cmbFiles
+Global $status
+Global $running
+Global $recording
+Global $runPaused
+
+Global $appPath
+Global $gTaskActive
+Global $currentFile
+Global $iniFile
+
+Global $gCurrLines[1]
+Global $gActiveIndex = 0
+Global $gLastVisibleText = ""
+Global $gFileNames[1]
+Global $gFileDisplays[1]
+Global $gActionName = ""
+Global $gMicractsDir = ""
+Global $gBlkDir = ""
+Global $gFlowFile = ""
+Global $gEnvFile = ""
+Global $gLoadedRecordName = ""
+Global $gSuppressFlowUpdate = False
+Global $gVarArray[0][5]
+Global $gVarIndex[0][3]
+Global $gCompiledLines[1]
+Global $gVarCompileError = ""
+
+Func EnsureActionWorkspace()
+
+    If Not $gTaskActive Then Return False
+
+    $gActionName = HR_TaskNameFromPath($appPath)
+    If $gActionName = "" Then $gActionName = "newtask"
+
+    $gMicractsDir = $appPath & "\micracts"
+    $gBlkDir = $appPath & "\blk"
+    $gFlowFile = $appPath & "\" & $gActionName & ".tsk"
+    $gEnvFile = $appPath & "\" & $gActionName & ".env"
+
+    If Not FileExists($gMicractsDir) Then DirCreate($gMicractsDir)
+    If Not FileExists($gBlkDir) Then DirCreate($gBlkDir)
+    If Not FileExists($appPath & "\index") Then DirCreate($appPath & "\index")
+    If Not FileExists($appPath & "\export") Then DirCreate($appPath & "\export")
+
+    _EnsureActionEnv()
+    If Not VarLoadEnv() Then Return False
+    _MigrateRootRecordsToMicracts()
+    _EnsureActionFlow()
+    _NormalizeActionFlowExtensions()
+    VarEnsureAllRecordDefaults()
+    VarLoadEnv()
+
+    Return True
+
+EndFunc
+
+Func _EnsureActionEnv()
+
+    If FileExists($gEnvFile) Then Return
+
+    Local $h = FileOpen($gEnvFile, 2)
+    If $h = -1 Then Return
+
+    FileWriteLine($h, ";= HandyRecorder action environment")
+    FileWriteLine($h, "[Action]")
+    FileWriteLine($h, "name=" & $gActionName)
+    FileWriteLine($h, "version=1.90")
+    FileWriteLine($h, "")
+    FileWriteLine($h, "[Paths]")
+    FileWriteLine($h, "micracts=micracts")
+    FileWriteLine($h, "blk=blk")
+    FileWriteLine($h, "index=index")
+    FileWriteLine($h, "export=export")
+    FileWriteLine($h, "")
+    FileWriteLine($h, "[Vars.global]")
+    FileWriteLine($h, "; $sample_xy=100,200")
+    FileWriteLine($h, "; $sample_text=""hello""")
+
+    FileClose($h)
+
+EndFunc
+
+
+; =========================
+; V1.9 VARIABLE TABLE + MICRO COMPILER
+; =========================
+
+Func VarLoadEnv()
+
+    ReDim $gVarArray[0][5]
+    ReDim $gVarIndex[0][3]
+    ReDim $gCompiledLines[1]
+    $gVarCompileError = ""
+
+    If $gEnvFile = "" Or Not FileExists($gEnvFile) Then Return True
+
+    Local $lines
+    _FileReadToArray($gEnvFile, $lines)
+    If @error Then Return True
+
+    Local $scope = ""
+
+    For $i = 1 To $lines[0]
+        Local $line = StringStripWS($lines[$i], 3)
+        If $line = "" Then ContinueLoop
+        If StringLeft($line, 1) = ";" Then ContinueLoop
+
+        If StringLeft($line, 1) = "[" And StringRight($line, 1) = "]" Then
+            Local $section = StringTrimRight(StringTrimLeft($line, 1), 1)
+            If StringLeft(StringLower($section), 5) = "vars." Then
+                $scope = StringMid($section, 6)
+                If $scope = "" Then $scope = "global"
+            Else
+                $scope = ""
+            EndIf
+            ContinueLoop
+        EndIf
+
+        If $scope = "" Then ContinueLoop
+        If StringLeft($line, 1) <> "$" Then ContinueLoop
+
+        Local $eq = StringInStr($line, "=")
+        If $eq < 2 Then ContinueLoop
+
+        Local $name = StringStripWS(StringMid($line, 2, $eq - 2), 3)
+        Local $value = StringStripWS(StringMid($line, $eq + 1), 3)
+        If $name = "" Then ContinueLoop
+
+        If VarFindIndexedRow($scope, $name) >= 0 Then
+            $gVarCompileError = "Duplicate var: " & $scope & ".$" & $name
+            ReDim $gVarArray[0][5]
+            ReDim $gVarIndex[0][3]
+            GUICtrlSetData($status, $gVarCompileError)
+            Return False
+        EndIf
+
+        Local $v1 = $value
+        Local $v2 = ""
+        Local $comma = StringInStr($value, ",")
+        If $comma > 0 Then
+            $v1 = StringStripWS(StringLeft($value, $comma - 1), 3)
+            $v2 = StringStripWS(StringMid($value, $comma + 1), 3)
+        EndIf
+
+        $v1 = VarUnquote($v1)
+        $v2 = VarUnquote($v2)
+
+        Local $type = "scalar"
+        If $v2 <> "" Then $type = "pair"
+
+        VarAdd($scope, $name, $v1, $v2, $type)
+    Next
+
+    Return True
+
+EndFunc
+
+Func VarUnquote($value)
+
+    If StringLen($value) >= 2 And StringLeft($value, 1) = '"' And StringRight($value, 1) = '"' Then
+        $value = StringTrimLeft(StringTrimRight($value, 1), 1)
+        $value = StringReplace($value, '""', '"')
+    EndIf
+
+    Return $value
+
+EndFunc
+
+Func VarAdd($scope, $name, $v1, $v2, $type)
+
+    Local $row = UBound($gVarArray)
+    ReDim $gVarArray[$row + 1][5]
+    $gVarArray[$row][0] = $scope
+    $gVarArray[$row][1] = $name
+    $gVarArray[$row][2] = $v1
+    $gVarArray[$row][3] = $v2
+    $gVarArray[$row][4] = $type
+
+    Local $idx = UBound($gVarIndex)
+    ReDim $gVarIndex[$idx + 1][3]
+    $gVarIndex[$idx][0] = $scope
+    $gVarIndex[$idx][1] = $name
+    $gVarIndex[$idx][2] = $row
+
+EndFunc
+
+Func VarFindIndexedRow($scope, $name)
+
+    Local $s = StringLower($scope)
+    Local $n = StringLower($name)
+
+    For $i = 0 To UBound($gVarIndex) - 1
+        If StringLower($gVarIndex[$i][0]) = $s And StringLower($gVarIndex[$i][1]) = $n Then Return Number($gVarIndex[$i][2])
+    Next
+
+    Return -1
+
+EndFunc
+
+Func VarFindRowForCompile($scope, $name)
+
+    Local $row = VarFindIndexedRow($scope, $name)
+    If $row >= 0 Then Return $row
+
+    Return VarFindIndexedRow("global", $name)
+
+EndFunc
+
+Func VarCompileCommands($recScope = "")
+
+    ReDim $gCompiledLines[UBound($gCurrLines)]
+    $gVarCompileError = ""
+
+    If $recScope = "" Then $recScope = $gLoadedRecordName
+    If $recScope = "" Then $recScope = _CleanRecordName(RecordNameFromDisplay(GUICtrlRead($cmbFiles)))
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        $gCompiledLines[$i] = VarCompileLine($gCurrLines[$i], $recScope)
+        If $gVarCompileError <> "" Then
+            GUICtrlSetData($status, $gVarCompileError)
+            Return False
+        EndIf
+    Next
+
+    Return True
+
+EndFunc
+
+Func VarCompileLine($line, $recScope)
+
+    Local $trim = StringStripWS($line, 3)
+    If $trim = "" Then Return ""
+    If StringLeft($trim, 2) = ";=" Then Return ""
+
+    Local $cmd = _CsvField($line, 1)
+    If StringLeft($cmd, 7) = "Anchor_" Then Return _CompileAnchorLine($line, $recScope)
+    If StringLeft($cmd, 4) = "MSP_" Then Return _CompileMspLine($line, $recScope)
+    If StringLeft($cmd, 4) = "MSM_" Then Return _CompileMsmLine($line, $recScope)
+    If StringLeft($cmd, 3) = "MD_" Then Return _CompileDragLine($line, $recScope)
+    If StringLeft($cmd, 2) = "M_" Then Return _CompileMouseLine($line, $recScope)
+    If StringLeft($cmd, 3) = "MM_" Then Return _CompileMouseMoveLine($line, $recScope)
+    If StringLeft($cmd, 2) = "K_" Then Return _CompileKeyLine($line, $recScope)
+    If StringLeft($cmd, 2) = "S_" Then Return _CompileStringLine($line, $recScope)
+    If StringLeft($cmd, 3) = "MW_" Then Return _CompileWheelLine($line, $recScope)
+    If StringLeft($cmd, 2) = "P_" Then Return _CompilePauseLine($line, $recScope)
+    If StringLeft($cmd, 2) = "T_" Then Return _CompileDelayLine($line, $recScope)
+
+    Return "ExecuteCommand(" & VarCodeQuote($line) & ")"
+
+EndFunc
+Func _CompileAnchorLine($line, $scope)
+
+    Local $startPos = VarCompileField(_CsvField($line, 2), $scope, "", True)
+    Local $endPos = VarCompileField(_CsvField($line, 3), $scope, "", True)
+    Local $repeat = VarCompileField(_CsvField($line, 5), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 6), $scope, "0")
+
+    Return "HR_RunAnchor(" & $startPos & "," & $endPos & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+Func _CompileMspLine($line, $scope)
+
+    Local $cmd = VarCodeQuote(_CsvField($line, 1))
+    Local $x = VarCompileField(_CsvField($line, 2), $scope)
+    Local $y = VarCompileField(_CsvField($line, 3), $scope)
+    Local $btn = VarCodeQuote(_CsvField($line, 4))
+    Local $repeat = VarCompileField(_CsvField($line, 5), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 6), $scope, "0")
+
+    Return "HR_RunMSP(" & $cmd & "," & $x & "," & $y & "," & $btn & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+Func _CompileMsmLine($line, $scope)
+
+    Local $cmd = VarCodeQuote(_CsvField($line, 1))
+    Local $x = VarCompileField(_CsvField($line, 2), $scope)
+    Local $y = VarCompileField(_CsvField($line, 3), $scope)
+    Local $repeat = VarCompileField(_CsvField($line, 5), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 6), $scope, "0")
+
+    Return "HR_RunMSM(" & $cmd & "," & $x & "," & $y & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+Func _CompileDragLine($line, $scope)
+
+    Local $startPos = VarCompileField(_CsvField($line, 2), $scope, "", True)
+    Local $endPos = VarCompileField(_CsvField($line, 3), $scope, "", True)
+    Local $btn = VarCodeQuote(_CsvField($line, 4))
+    Local $repeat = VarCompileField(_CsvField($line, 5), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 6), $scope, "0")
+
+    Return "HR_RunDrag(" & $startPos & "," & $endPos & "," & $btn & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+Func _CompileMouseLine($line, $scope)
+
+    Local $cmd = _CsvField($line, 1)
+    Local $x = VarCompileField(_CsvField($line, 2), $scope)
+    Local $y = VarCompileField(_CsvField($line, 3), $scope)
+    Local $btn = VarCodeQuote(_CsvField($line, 4))
+    Local $repeat = VarCompileField(_CsvField($line, 5), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 6), $scope, "0")
+
+    If StringLeft($cmd, 3) = "M_D" Then Return "HR_RunMouseDown(" & $x & "," & $y & "," & $btn & "," & $repeat & "," & $delay & ")"
+    If StringLeft($cmd, 3) = "M_U" Then Return "HR_RunMouseUp(" & $x & "," & $y & "," & $btn & "," & $repeat & "," & $delay & ")"
+
+    Return "HR_RunMouseAction(" & $x & "," & $y & "," & $btn & "," & $repeat & ")"
+
+EndFunc
+
+Func _CompileMouseMoveLine($line, $scope)
+
+    Local $x = VarCompileField(_CsvField($line, 2), $scope)
+    Local $y = VarCompileField(_CsvField($line, 3), $scope)
+    Local $speed = VarCompileField(_CsvField($line, 4), $scope, "0")
+    Local $repeat = VarCompileField(_CsvField($line, 5), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 6), $scope, "0")
+
+    Return "HR_RunMouseMove(" & $x & "," & $y & "," & $speed & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+
+Func _CompileKeyLine($line, $scope)
+
+    Local $key = VarCodeQuote(_CsvField($line, 2))
+    Local $repeat = VarCompileField(_CsvField($line, 3), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 4), $scope, "0")
+
+    Return "HR_RunSend(" & $key & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+Func _CompileStringLine($line, $scope)
+
+    Local $s = VarCompileField(_CsvField($line, 2), $scope, "", True)
+    Local $repeat = VarCompileField(_CsvField($line, 3), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 4), $scope, "0")
+
+    Return "HR_RunSend(" & $s & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+
+Func _CompileWheelLine($line, $scope)
+
+    Local $dir = VarCodeQuote(_CsvField($line, 2))
+    Local $repeat = VarCompileField(_CsvField($line, 3), $scope, "1")
+    Local $delay = VarCompileField(_CsvField($line, 4), $scope, "0")
+
+    Return "HR_RunWheel(" & $dir & "," & $repeat & "," & $delay & ")"
+
+EndFunc
+Func _CompilePauseLine($line, $scope)
+
+    Local $cmd = _CsvField($line, 1)
+    Local $delay = VarCompileField(_CsvField($line, 4), $scope, "0")
+    Local $focus = "False"
+    If StringLeft($cmd, 3) = "P_F" Then $focus = "True"
+
+    Return "HR_RunPause(" & $delay & "," & $focus & ")"
+
+EndFunc
+
+Func _CompileDelayLine($line, $scope)
+
+    Local $seconds = VarCompileField(_CsvField($line, 2), $scope, "0")
+    Local $repeat = VarCompileField(_CsvField($line, 3), $scope, "1")
+
+    Return "HR_RunDelay(" & $seconds & "," & $repeat & ")"
+
+EndFunc
+
+Func VarCompileField($field, $scope, $default = "", $asString = False)
+
+    $field = StringStripWS($field, 3)
+    If $field = "" Then $field = $default
+
+    Local $expr = VarCompositeExpression($field, $scope)
+    If $expr <> "" Then Return $expr
+
+    $expr = VarFieldExpression($field, $scope)
+    If $expr <> "" Then Return $expr
+
+    If $asString Then Return VarCodeQuote(VarUnquote($field))
+    Return VarNumericLiteral($field)
+
+EndFunc
+
+Func VarCompositeExpression($field, $scope)
+
+    If StringInStr($field, "~") < 1 Then Return ""
+
+    Local $parts = StringSplit($field, "~")
+    If $parts[0] < 2 Then Return ""
+
+    Local $left = VarFieldExpression(StringStripWS($parts[1], 3), $scope)
+    Local $right = VarFieldExpression(StringStripWS($parts[2], 3), $scope)
+
+    If $left = "" Or $right = "" Then Return ""
+
+    Return $left & " & " & VarCodeQuote("~") & " & " & $right
+
+EndFunc
+Func VarFieldExpression($field, $scope)
+
+    Local $m = StringRegExp($field, '^\$([A-Za-z_][A-Za-z0-9_]*)(?:\[([12])\])?$', 1)
+    If @error Or Not IsArray($m) Then Return ""
+
+    Local $name = $m[0]
+    Local $slot = "1"
+    If UBound($m) > 1 And $m[1] <> "" Then $slot = $m[1]
+
+    Local $row = VarFindRowForCompile($scope, $name)
+    If $row < 0 Then
+        $gVarCompileError = "Missing var: " & $scope & ".$" & $name
+        Return ""
+    EndIf
+
+    Local $col = 2
+    If $slot = "2" Then $col = 3
+
+    Return "$gVarArray[" & $row & "][" & $col & "]"
+
+EndFunc
+
+Func VarNumericLiteral($value)
+
+    $value = VarUnquote($value)
+    If $value = "" Then Return "0"
+    If StringRegExp($value, '^-?\d+(\.\d+)?$') Then Return $value
+
+    Return VarCodeQuote($value)
+
+EndFunc
+
+Func VarCodeQuote($value)
+
+    $value = StringReplace($value, '"', '""')
+    Return '"' & $value & '"'
+
+EndFunc
+
+Func VarGetValue($scope, $name, $default = "")
+
+    Local $row = VarFindIndexedRow($scope, $name)
+    If $row < 0 Then $row = VarFindIndexedRow("global", $name)
+    If $row < 0 Then Return $default
+
+    Return $gVarArray[$row][2]
+
+EndFunc
+
+Func VarCommandLineEnabled($recName, $lineIndex)
+
+    If $lineIndex < 1 Then Return True
+    Local $name = "enable_" & $lineIndex
+    Local $row = VarFindIndexedRow(_CleanRecordName($recName), $name)
+    If $row < 0 Then $row = VarFindIndexedRow("global", $name)
+    If $row < 0 Then Return True
+
+    Local $value = StringLower(StringStripWS($gVarArray[$row][2], 3))
+    If $value = "" Then Return True
+    If $value = "0" Or $value = "false" Or $value = "no" Or $value = "off" Then Return False
+    Return True
+
+EndFunc
+Func VarRecordFlag($recName, $name, $default = "1")
+
+    Local $value = StringLower(StringStripWS(VarGetValue(_CleanRecordName($recName), $name, $default), 3))
+    If $value = "" Then $value = StringLower($default)
+
+    If $value = "0" Or $value = "false" Or $value = "no" Or $value = "off" Then Return False
+    Return True
+
+EndFunc
+Func VarDebugShowCompiled()
+
+    VarLoadEnv()
+    VarCompileCommands()
+
+    Local $x = 120
+    Local $y = 120
+    If IsDeclared("gui") Then
+        Local $pos = WinGetPos($gui)
+        If IsArray($pos) Then
+            $x = $pos[0] + $pos[2] + 8
+            $y = $pos[1]
+        EndIf
+    EndIf
+
+    Local $dbgGui = GUICreate("DBG Arrays", 156, 152, $x, $y)
+    GUICtrlCreateLabel("Open array:", 8, 8, 90, 16)
+    Local $btnVarArray = GUICtrlCreateButton("VarArray", 8, 30, 64, 24)
+    Local $btnVarIndex = GUICtrlCreateButton("VarIndex", 82, 30, 64, 24)
+    Local $btnCurr = GUICtrlCreateButton("CurrLines", 8, 64, 64, 24)
+    Local $btnComp = GUICtrlCreateButton("Compiled", 82, 64, 64, 24)
+    Local $btnClose = GUICtrlCreateButton("X", 126, 118, 20, 22)
+
+    GUISetState(@SW_SHOW, $dbgGui)
+
+    While 1
+        Local $msg = GUIGetMsg()
+        Switch $msg
+            Case $GUI_EVENT_CLOSE, $btnClose
+                ExitLoop
+            Case $btnVarArray
+                _ArrayDisplay($gVarArray, "VarArray")
+            Case $btnVarIndex
+                _ArrayDisplay($gVarIndex, "VarIndex")
+            Case $btnCurr
+                _ArrayDisplay($gCurrLines, "CurrLines")
+            Case $btnComp
+                _ArrayDisplay($gCompiledLines, "Compiled")
+        EndSwitch
+        Sleep(20)
+    WEnd
+
+    GUIDelete($dbgGui)
+
+EndFunc
+Func VarEnsureAllRecordDefaults()
+
+    If Not $gTaskActive Then Return
+    If $gMicractsDir = "" Or Not FileExists($gMicractsDir) Then Return
+
+    Local $search = FileFindFirstFile($gMicractsDir & "\*.rec")
+    If $search = -1 Then Return
+
+    While 1
+        Local $f = FileFindNextFile($search)
+        If @error Then ExitLoop
+        VarEnsureRecordDefaults(StringTrimRight($f, 4), False)
+    WEnd
+
+    FileClose($search)
+
+EndFunc
+
+Func VarEnsureRecordDefaults($recName, $reload = True)
+
+    $recName = _CleanRecordName($recName)
+    If $recName = "" Then Return False
+    If $gEnvFile = "" Then Return False
+    If Not FileExists($gEnvFile) Then _EnsureActionEnv()
+
+    Local $changed = False
+    If Not VarEnvHasSection("Vars." & $recName) Then
+        Local $h = FileOpen($gEnvFile, 1)
+        If $h = -1 Then Return False
+        FileWriteLine($h, "")
+        FileWriteLine($h, "[Vars." & $recName & "]")
+        FileWriteLine($h, "$run=1")
+        FileWriteLine($h, "$next=0")
+        FileClose($h)
+        $changed = True
+    Else
+        If Not VarEnvSectionHasName($recName, "run") Then
+            VarEnvAppendToSection($recName, "$run=1")
+            $changed = True
+        EndIf
+        If Not VarEnvSectionHasName($recName, "next") Then
+            VarEnvAppendToSection($recName, "$next=0")
+            $changed = True
+        EndIf
+    EndIf
+
+    If $changed And $reload Then VarLoadEnv()
+    Return $changed
+
+EndFunc
+
+Func VarEnvHasSection($sectionName)
+
+    Local $lines
+    _FileReadToArray($gEnvFile, $lines)
+    If @error Then Return False
+
+    Local $target = "[" & StringLower($sectionName) & "]"
+    For $i = 1 To $lines[0]
+        If StringLower(StringStripWS($lines[$i], 3)) = $target Then Return True
+    Next
+
+    Return False
+
+EndFunc
+
+Func VarEnvSectionHasName($scope, $name)
+
+    Local $lines
+    _FileReadToArray($gEnvFile, $lines)
+    If @error Then Return False
+
+    Local $target = "[vars." & StringLower($scope) & "]"
+    Local $inSection = False
+    Local $needle = "$" & StringLower($name) & "="
+
+    For $i = 1 To $lines[0]
+        Local $line = StringStripWS($lines[$i], 3)
+        If StringLeft($line, 1) = "[" And StringRight($line, 1) = "]" Then
+            $inSection = (StringLower($line) = $target)
+            ContinueLoop
+        EndIf
+
+        If Not $inSection Then ContinueLoop
+        If StringLeft($line, 1) = ";" Then ContinueLoop
+        If StringLeft(StringLower($line), StringLen($needle)) = $needle Then Return True
+    Next
+
+    Return False
+
+EndFunc
+
+Func VarEnvAppendToSection($scope, $lineToAdd)
+
+    Local $lines
+    _FileReadToArray($gEnvFile, $lines)
+    If @error Then Return False
+
+    Local $target = "[vars." & StringLower($scope) & "]"
+    Local $h = FileOpen($gEnvFile, 2)
+    If $h = -1 Then Return False
+
+    Local $inSection = False
+    Local $written = False
+
+    For $i = 1 To $lines[0]
+        Local $line = $lines[$i]
+        Local $trim = StringStripWS($line, 3)
+
+        If $inSection And StringLeft($trim, 1) = "[" And StringRight($trim, 1) = "]" Then
+            FileWriteLine($h, $lineToAdd)
+            $written = True
+            $inSection = False
+        EndIf
+
+        FileWriteLine($h, $line)
+
+        If StringLower($trim) = $target Then $inSection = True
+    Next
+
+    If $inSection And Not $written Then
+        FileWriteLine($h, $lineToAdd)
+        $written = True
+    EndIf
+
+    FileClose($h)
+    Return $written
+
+EndFunc
+
+Func VarEnvAddVariable($scope, $name, $value1, $value2 = "", $type = "scalar")
+
+    $scope = _CleanRecordName($scope)
+    $name = StringStripWS($name, 3)
+    If $scope = "" Or $name = "" Then Return False
+    If StringLeft($name, 1) = "$" Then $name = StringTrimLeft($name, 1)
+
+    VarLoadEnv()
+    If VarFindIndexedRow($scope, $name) >= 0 Then
+        GUICtrlSetData($status, "Var exists")
+        Return False
+    EndIf
+
+    If Not VarEnvHasSection("Vars." & $scope) Then
+        Local $hNew = FileOpen($gEnvFile, 1)
+        If $hNew = -1 Then Return False
+        FileWriteLine($hNew, "")
+        FileWriteLine($hNew, "[Vars." & $scope & "]")
+        FileClose($hNew)
+    EndIf
+
+    Local $line = "$" & $name & "=" & VarEnvValueText($value1, $value2)
+    If Not VarEnvAppendToSection($scope, $line) Then Return False
+
+    VarLoadEnv()
+    Return True
+
+EndFunc
+
+Func VarEnvValueText($value1, $value2 = "")
+
+    Local $v1 = VarEnvQuoteIfNeeded($value1)
+    If $value2 = "" Then Return $v1
+
+    Return $v1 & "," & VarEnvQuoteIfNeeded($value2)
+
+EndFunc
+
+Func VarEnvQuoteIfNeeded($value)
+
+    $value = String($value)
+    If StringInStr($value, ",") > 0 Or StringInStr($value, " ") > 0 Or StringInStr($value, '"') > 0 Then
+        Return '"' & StringReplace($value, '"', '""') & '"'
+    EndIf
+
+    Return $value
+
+EndFunc
+Func _MigrateRootRecordsToMicracts()
+
+    Local $search = FileFindFirstFile($appPath & "\*.rec")
+    If $search = -1 Then Return
+
+    While 1
+        Local $f = FileFindNextFile($search)
+        If @error Then ExitLoop
+
+        Local $src = $appPath & "\" & $f
+        Local $dst = $gMicractsDir & "\" & $f
+
+        If Not FileExists($dst) Then FileCopy($src, $dst, 0)
+    WEnd
+
+    FileClose($search)
+
+EndFunc
+
+Func _EnsureActionFlow()
+
+    If FileExists($gFlowFile) Then Return
+
+    Local $items[1][2]
+    Local $count = 0
+    Local $search = FileFindFirstFile($gMicractsDir & "\*.rec")
+
+    If $search <> -1 Then
+        While 1
+            Local $f = FileFindNextFile($search)
+            If @error Then ExitLoop
+
+            $count += 1
+            ReDim $items[$count + 1][2]
+            $items[$count][0] = StringTrimRight($f, 4)
+            $items[$count][1] = FileGetTime($gMicractsDir & "\" & $f, 0, 1)
+        WEnd
+
+        FileClose($search)
+    EndIf
+
+    If $count > 1 Then
+        For $i = 1 To $count - 1
+            For $j = $i + 1 To $count
+                If $items[$j][1] < $items[$i][1] Then
+                    Local $tmpName = $items[$i][0]
+                    Local $tmpTime = $items[$i][1]
+                    $items[$i][0] = $items[$j][0]
+                    $items[$i][1] = $items[$j][1]
+                    $items[$j][0] = $tmpName
+                    $items[$j][1] = $tmpTime
+                EndIf
+            Next
+        Next
+    EndIf
+
+    Local $h = FileOpen($gFlowFile, 2)
+    If $h = -1 Then Return
+
+    FileWriteLine($h, ";= " & $gActionName & " micract order")
+
+    For $i = 1 To $count
+        FileWriteLine($h, _FlowEntryForRecord($items[$i][0]))
+    Next
+
+    FileClose($h)
+
+EndFunc
+
+Func _NormalizeActionFlowExtensions()
+
+    If Not FileExists($gFlowFile) Then Return
+
+    Local $lines
+    _FileReadToArray($gFlowFile, $lines)
+    If @error Then Return
+
+    Local $changed = False
+    Local $h = FileOpen($gFlowFile, 2)
+    If $h = -1 Then Return
+
+    For $i = 1 To $lines[0]
+        Local $line = TaskTrimRight($lines[$i])
+        Local $trimLeft = TaskWithoutIndent($line)
+        Local $name = _FlowRecordNameFromLine($line)
+
+        If $line <> "" And StringLeft($trimLeft, 2) <> ";=" And StringLeft($trimLeft, 2) <> ":=" And Not TaskIsBranchLine($line) And $name <> "" And StringLower($line) <> StringLower(_FlowEntryForRecord($name)) Then
+            FileWriteLine($h, _FlowEntryForRecord($name))
+            $changed = True
+        Else
+            FileWriteLine($h, $lines[$i])
+        EndIf
+    Next
+
+    FileClose($h)
+
+EndFunc
+
+Func RecordPath($name)
+
+    If Not $gTaskActive Then Return ""
+    If Not EnsureActionWorkspace() Then Return ""
+    Return $gMicractsDir & "\" & _CleanRecordName($name) & ".rec"
+
+EndFunc
+
+Func _LoadFlowNames()
+
+    ReDim $gFileNames[1]
+    ReDim $gFileDisplays[1]
+
+    If Not $gTaskActive Then Return
+    If Not EnsureActionWorkspace() Then Return
+
+    Local $lines
+    _FileReadToArray($gFlowFile, $lines)
+    If @error Then Return
+
+    Local $count = 0
+
+    For $i = 1 To $lines[0]
+        Local $line = TaskTrimRight($lines[$i])
+        If $line = "" Then ContinueLoop
+        If StringLeft(TaskWithoutIndent($line), 2) = ";=" Then ContinueLoop
+        If StringLeft(TaskWithoutIndent($line), 2) = ":=" Then ContinueLoop
+
+        Local $name = TaskRecordNameFromLine($line)
+        If $name = "" Then ContinueLoop
+
+        $count += 1
+        ReDim $gFileNames[$count + 1]
+        ReDim $gFileDisplays[$count + 1]
+        $gFileNames[$count] = $name
+        $gFileDisplays[$count] = TaskDisplayLine($line)
+    Next
+
+EndFunc
+
+Func _FileNameArrayContains($name)
+
+    For $i = 1 To UBound($gFileNames) - 1
+        If $gFileNames[$i] = $name Then Return True
+    Next
+
+    Return False
+
+EndFunc
+
+Func _FlowContainsName($name)
+
+    Local $lines
+    _FileReadToArray($gFlowFile, $lines)
+    If @error Then Return False
+
+    For $i = 1 To $lines[0]
+        Local $line = TaskTrimRight($lines[$i])
+        If TaskRecordNameFromLine($line) = $name Then Return True
+    Next
+
+    Return False
+
+EndFunc
+
+Func _FlowRecordNameFromLine($line)
+
+    $line = StringStripWS($line, 3)
+    $line = TaskStripMissingMarker($line)
+    If $line = "" Then Return ""
+    If StringLeft($line, 2) = ";=" Then Return ""
+    If StringLeft($line, 2) = ":=" Then Return ""
+    If StringInStr($line, "\") > 0 Or StringInStr($line, "/") > 0 Then Return ""
+
+    Local $lower = StringLower($line)
+    If StringRight($lower, 4) = ".rec" Then Return _CleanRecordName($line)
+
+    If StringInStr($line, ".") > 0 Then Return ""
+
+    ; Local HandyRecorder rec action. The .rec extension is implicit.
+    Return _CleanRecordName($line)
+
+EndFunc
+
+Func TaskStripMissingMarker($line)
+
+    $line = StringStripWS($line, 3)
+    If StringLeft($line, 3) = "[?]" Then
+        $line = StringStripWS(StringTrimLeft($line, 3), 3)
+    EndIf
+    If StringRight($line, 3) = "[?]" Then
+        $line = StringStripWS(StringTrimRight($line, 3), 3)
+    EndIf
+    If StringLeft(StringLower($line), 9) = "[missing]" Then
+        $line = StringStripWS(StringTrimLeft($line, 9), 3)
+    EndIf
+    If StringRight(StringLower($line), 9) = "[missing]" Then
+        $line = StringStripWS(StringTrimRight($line, 9), 3)
+    EndIf
+    Return $line
+
+EndFunc
+
+Func TaskTrimRight($line)
+
+    Return StringStripWS($line, 2)
+
+EndFunc
+
+Func TaskIndentLevel($line)
+
+    Local $n = 0
+    While StringMid($line, $n + 1, 1) = @TAB
+        $n += 1
+    WEnd
+    Return $n
+
+EndFunc
+
+Func TaskWithoutIndent($line)
+
+    Return StringStripWS($line, 1)
+
+EndFunc
+
+Func TaskIsBranchLine($line)
+
+    Local $s = TaskStripMissingMarker(TaskWithoutIndent($line))
+    Return StringLeft($s, 2) = "->"
+
+EndFunc
+
+Func TaskBranchNumber($line)
+
+    Local $s = TaskStripMissingMarker(TaskWithoutIndent($line))
+    If StringLeft($s, 2) <> "->" Then Return 0
+    Local $i = 3
+    Local $digits = ""
+    While $i <= StringLen($s)
+        Local $ch = StringMid($s, $i, 1)
+        If Not StringIsDigit($ch) Then ExitLoop
+        $digits &= $ch
+        $i += 1
+    WEnd
+    If $digits = "" Then Return 0
+    Return Number($digits)
+
+EndFunc
+
+Func TaskBranchRecordName($line)
+
+    Local $s = TaskStripMissingMarker(TaskWithoutIndent($line))
+    If StringLeft($s, 2) <> "->" Then Return ""
+    Local $i = 3
+    While $i <= StringLen($s)
+        Local $ch = StringMid($s, $i, 1)
+        If Not StringIsDigit($ch) Then ExitLoop
+        $i += 1
+    WEnd
+    Local $rest = TaskStripMissingMarker(StringMid($s, $i))
+    Return _FlowRecordNameFromLine($rest)
+
+EndFunc
+
+Func TaskLinePayload($line)
+
+    Local $s = TaskStripMissingMarker(TaskWithoutIndent(TaskTrimRight($line)))
+    If StringLeft($s, 2) <> "->" Then Return $s
+
+    Local $i = 3
+    While $i <= StringLen($s)
+        Local $ch = StringMid($s, $i, 1)
+        If Not StringIsDigit($ch) Then ExitLoop
+        $i += 1
+    WEnd
+
+    Return TaskStripMissingMarker(StringMid($s, $i))
+
+EndFunc
+Func TaskRecordNameFromLine($line)
+
+    If TaskIsBranchLine($line) Then Return TaskBranchRecordName($line)
+    Return _FlowRecordNameFromLine(TaskLinePayload($line))
+
+EndFunc
+
+Func TaskDisplayLine($line)
+
+    Local $indent = TaskIndentLevel($line)
+    Local $display = ""
+    For $i = 1 To $indent
+        $display &= ".."
+    Next
+    $display &= TaskWithoutIndent(TaskTrimRight($line))
+    Return $display
+
+EndFunc
+
+Func TaskRecordExists($name)
+
+    $name = _CleanRecordName($name)
+    If $name = "" Then Return False
+    Return FileExists($gMicractsDir & "\" & $name & ".rec")
+
+EndFunc
+
+Func TaskMarkMissingRecords()
+
+    If Not $gTaskActive Then Return
+    If Not EnsureActionWorkspace() Then Return
+    If Not FileExists($gFlowFile) Then Return
+
+    Local $lines
+    _FileReadToArray($gFlowFile, $lines)
+    If @error Then Return
+
+    Local $changed = False
+    Local $out[1]
+    Local $n = 0
+
+    For $i = 1 To $lines[0]
+        Local $line = TaskTrimRight($lines[$i])
+        If $line = "" Then ContinueLoop
+
+        Local $trimLeft = TaskWithoutIndent($line)
+        If StringLeft($trimLeft, 2) = ";=" Or StringLeft($trimLeft, 2) = ":=" Then
+            Local $cleanMarker = TaskLineWithoutMissingMarker($line)
+            If StringLeft(TaskWithoutIndent($cleanMarker), 2) = ":=" Then
+                $cleanMarker = TaskRepeatTabs(TaskIndentLevel($cleanMarker)) & ";=" & StringTrimLeft(TaskWithoutIndent($cleanMarker), 2)
+            EndIf
+            If $cleanMarker <> $line Then $changed = True
+            TaskArrayAppend($out, $n, $cleanMarker)
+            ContinueLoop
+        EndIf
+
+        Local $baseLine = TaskLineWithoutMissingMarker($line)
+        Local $name = TaskRecordNameFromLine($baseLine)
+        If $name <> "" Then
+            If TaskRecordExists($name) Then
+                If $baseLine <> $line Then $changed = True
+                TaskArrayAppend($out, $n, $baseLine)
+            Else
+                Local $missingLine = TaskMissingLine($baseLine)
+                If $missingLine <> $line Then $changed = True
+                TaskArrayAppend($out, $n, $missingLine)
+            EndIf
+        Else
+            TaskArrayAppend($out, $n, $line)
+        EndIf
+    Next
+
+    If Not $changed Then Return
+    $out[0] = $n
+    TaskWriteLines($out)
+
+EndFunc
+
+Func TaskLineWithoutMissingMarker($line)
+
+    Local $indent = TaskRepeatTabs(TaskIndentLevel($line))
+    If TaskIsBranchLine($line) Then
+        Local $num = TaskBranchNumber($line)
+        Local $name = TaskBranchRecordName($line)
+        If $num > 0 And $name <> "" Then Return $indent & "->" & $num & " " & $name
+    EndIf
+    Return $indent & TaskStripMissingMarker(TaskWithoutIndent($line))
+
+EndFunc
+
+Func TaskMissingLine($line)
+
+    Local $indent = TaskRepeatTabs(TaskIndentLevel($line))
+    If TaskIsBranchLine($line) Then
+        Local $num = TaskBranchNumber($line)
+        Local $name = TaskBranchRecordName($line)
+        If $num > 0 And $name <> "" Then Return $indent & "->" & $num & " [?] " & $name
+    EndIf
+    Return $indent & "[?] " & TaskStripMissingMarker(TaskWithoutIndent($line))
+
+EndFunc
+
+Func TaskDisplayNameForRecord($name)
+
+    $name = _CleanRecordName($name)
+    For $i = 1 To UBound($gFileNames) - 1
+        If $gFileNames[$i] = $name Then Return $gFileDisplays[$i]
+    Next
+    Return $name
+
+EndFunc
+
+Func RecordNameFromDisplay($display)
+
+    $display = StringStripWS($display, 3)
+    For $i = 1 To UBound($gFileDisplays) - 1
+        If $gFileDisplays[$i] = $display Then Return $gFileNames[$i]
+    Next
+    Return _CleanRecordName($display)
+
+EndFunc
+
+Func TaskRepeatTabs($count)
+
+    Local $s = ""
+    For $i = 1 To $count
+        $s &= @TAB
+    Next
+    Return $s
+
+EndFunc
+
+Func TaskBranchLine($indent, $number, $name)
+
+    Return TaskRepeatTabs($indent) & "->" & $number & " " & _FlowEntryForRecord($name)
+
+EndFunc
+
+Func TaskReplaceRecordNameInLine($line, $newName)
+
+    $newName = _FlowEntryForRecord($newName)
+    If TaskIsBranchLine($line) Then
+        Local $n = TaskBranchNumber($line)
+        If $n < 1 Then Return $line
+        Return TaskBranchLine(TaskIndentLevel($line), $n, $newName)
+    EndIf
+    Return $newName
+
+EndFunc
+
+Func _FlowEntryForRecord($name)
+
+    Return _CleanRecordName($name)
+
+EndFunc
+
+Func TaskReadLines(ByRef $outLines)
+
+    ReDim $outLines[1]
+    If Not $gTaskActive Then Return 0
+    If Not EnsureActionWorkspace() Then Return 0
+
+    Local $lines
+    _FileReadToArray($gFlowFile, $lines)
+    If @error Then Return 0
+
+    ReDim $outLines[$lines[0] + 1]
+    $outLines[0] = $lines[0]
+    For $i = 1 To $lines[0]
+        $outLines[$i] = $lines[$i]
+    Next
+
+    Return $lines[0]
+
+EndFunc
+
+Func TaskWriteLines(ByRef $lines)
+
+    If Not $gTaskActive Then Return False
+    If Not EnsureActionWorkspace() Then Return False
+
+    Local $h = FileOpen($gFlowFile, 2)
+    If $h = -1 Then Return False
+
+    For $i = 1 To UBound($lines) - 1
+        Local $line = TaskTrimRight($lines[$i])
+        If $line = "" Then ContinueLoop
+        FileWriteLine($h, $line)
+    Next
+
+    FileClose($h)
+    Return True
+
+EndFunc
+
+Func TaskBlockPath($name)
+
+    If Not $gTaskActive Then Return ""
+    If Not EnsureActionWorkspace() Then Return ""
+    Return $gBlkDir & "\" & TaskCleanBlockName($name) & ".blk"
+
+EndFunc
+
+Func TaskCleanBlockName($name)
+
+    $name = StringStripWS($name, 3)
+    $name = StringReplace($name, ".blk", "")
+    $name = StringRegExpReplace($name, '[\\/:*?"<>|]', "_")
+    $name = StringRegExpReplace($name, "\s+", "_")
+    Return $name
+
+EndFunc
+
+Func TaskIsExternalFileLine($line, $ext)
+
+    $line = StringStripWS(TaskLinePayload($line), 3)
+    If $line = "" Then Return False
+    If StringLeft($line, 2) = ";=" Then Return False
+    If StringLeft($line, 2) = ":=" Then Return False
+    If StringInStr($line, "\") < 1 And StringInStr($line, "/") < 1 Then Return False
+    Return StringRight(StringLower($line), StringLen($ext)) = StringLower($ext)
+
+EndFunc
+
+Func TaskExternalFilePath($line)
+
+    Return StringStripWS(TaskLinePayload($line), 3)
+
+EndFunc
+
+Func TaskIsBlockLine($line)
+
+    $line = StringStripWS(TaskLinePayload($line), 3)
+    If $line = "" Then Return False
+    If StringLeft($line, 2) = ";=" Then Return False
+    Return StringRight(StringLower($line), 4) = ".blk"
+
+EndFunc
+
+Func TaskBlockNameFromLine($line)
+
+    $line = StringStripWS(TaskLinePayload($line), 3)
+    If Not TaskIsBlockLine($line) Then Return ""
+    Return TaskCleanBlockName(StringTrimRight($line, 4))
+
+EndFunc
+
+Func TaskBuildRunList(ByRef $outList)
+
+    ReDim $outList[1]
+    If Not $gTaskActive Then Return False
+    If Not EnsureActionWorkspace() Then Return False
+
+    Local $stack[1]
+    Local $ok = TaskExpandFile($gFlowFile, 0, $stack, $outList)
+    If Not $ok Then Return False
+
+    Return UBound($outList) > 1
+
+EndFunc
+
+Func TaskExpandFile($file, $depth, ByRef $stack, ByRef $outList)
+
+    If $depth > 5 Then
+        GUICtrlSetData($status, "BlkDepth")
+        Return False
+    EndIf
+
+    Local $lowerFile = StringLower($file)
+    For $i = 1 To UBound($stack) - 1
+        If $stack[$i] = $lowerFile Then
+            GUICtrlSetData($status, "BlkLoop")
+            Return False
+        EndIf
+    Next
+
+    Local $stackCount = UBound($stack)
+    ReDim $stack[$stackCount + 1]
+    $stack[$stackCount] = $lowerFile
+
+    Local $lines
+    _FileReadToArray($file, $lines)
+    If @error Then
+        GUICtrlSetData($status, "NoTask")
+        Return False
+    EndIf
+
+    Local $active[16]
+    For $i = 0 To UBound($active) - 1
+        $active[$i] = 1
+    Next
+
+    For $i = 1 To $lines[0]
+        Local $line = TaskTrimRight($lines[$i])
+        If $line = "" Then ContinueLoop
+        Local $trimLeft = TaskWithoutIndent($line)
+        If StringLeft($trimLeft, 2) = ";=" Then ContinueLoop
+        If StringLeft($trimLeft, 2) = ":=" Then ContinueLoop
+
+        Local $indent = TaskIndentLevel($line)
+        If $indent > 15 Then $indent = 15
+        For $d = $indent + 1 To UBound($active) - 1
+            $active[$d] = 1
+        Next
+
+        If TaskIsBranchLine($line) Then
+            Local $parentActive = True
+            For $d = 1 To $indent - 1
+                If $active[$d] = 0 Then
+                    $parentActive = False
+                    ExitLoop
+                EndIf
+            Next
+            If $parentActive And TaskBranchNumber($line) = 1 Then
+                $active[$indent] = 1
+            Else
+                $active[$indent] = 0
+            EndIf
+            If $active[$indent] = 0 Then ContinueLoop
+        Else
+            Local $pathActive = True
+            For $d = 1 To $indent
+                If $active[$d] = 0 Then
+                    $pathActive = False
+                    ExitLoop
+                EndIf
+            Next
+            If Not $pathActive Then ContinueLoop
+        EndIf
+
+        If TaskIsExternalFileLine($line, ".blk") Then
+            Local $externalBlk = TaskExternalFilePath($line)
+            If Not FileExists($externalBlk) Then
+                GUICtrlSetData($status, "NoBlk")
+                Return False
+            EndIf
+            If Not TaskExpandFile($externalBlk, $depth + 1, $stack, $outList) Then Return False
+            ContinueLoop
+        EndIf
+
+        If TaskIsExternalFileLine($line, ".rec") Then
+            Local $externalRec = TaskExternalFilePath($line)
+            If FileExists($externalRec) Then
+                Local $ecount = UBound($outList)
+                ReDim $outList[$ecount + 1]
+                $outList[$ecount] = $externalRec
+            EndIf
+            ContinueLoop
+        EndIf
+
+        If TaskIsBlockLine($line) Then
+            Local $blkName = TaskBlockNameFromLine($line)
+            Local $blkFile = TaskBlockPath($blkName)
+            If Not FileExists($blkFile) Then
+                GUICtrlSetData($status, "NoBlk")
+                Return False
+            EndIf
+            If Not TaskExpandFile($blkFile, $depth + 1, $stack, $outList) Then Return False
+            ContinueLoop
+        EndIf
+
+        Local $recName = TaskRecordNameFromLine($line)
+        If $recName <> "" And FileExists(RecordPath($recName)) And VarRecordFlag($recName, "run", "1") Then
+            Local $count = UBound($outList)
+            ReDim $outList[$count + 1]
+            $outList[$count] = $recName
+        EndIf
+    Next
+
+    ReDim $stack[$stackCount]
+    Return True
+
+EndFunc
+
+Func _AppendFlowName($name)
+
+    If Not $gTaskActive Then Return
+    If Not EnsureActionWorkspace() Then Return
+    $name = _CleanRecordName($name)
+    If $name = "" Then Return
+    If _FlowContainsName($name) Then Return
+
+    Local $h = FileOpen($gFlowFile, 1)
+    If $h = -1 Then Return
+    FileWriteLine($h, _FlowEntryForRecord($name))
+    FileClose($h)
+
+EndFunc
+
+Func _InsertFlowNameAfter($afterName, $newName)
+
+    If Not $gTaskActive Then Return
+    If Not EnsureActionWorkspace() Then Return
+    $afterName = _CleanRecordName($afterName)
+    $newName = _CleanRecordName($newName)
+    If $newName = "" Then Return
+    If _FlowContainsName($newName) Then Return
+
+    Local $lines
+    _FileReadToArray($gFlowFile, $lines)
+    If @error Then
+        _AppendFlowName($newName)
+        Return
+    EndIf
+
+    Local $h = FileOpen($gFlowFile, 2)
+    If $h = -1 Then Return
+
+    Local $inserted = False
+
+    For $i = 1 To $lines[0]
+        FileWriteLine($h, $lines[$i])
+
+        Local $line = TaskTrimRight($lines[$i])
+        If Not $inserted And TaskRecordNameFromLine($line) = $afterName Then
+            FileWriteLine($h, TaskRepeatTabs(TaskIndentLevel($line)) & _FlowEntryForRecord($newName))
+            $inserted = True
+        EndIf
+    Next
+
+    If Not $inserted Then FileWriteLine($h, _FlowEntryForRecord($newName))
+
+    FileClose($h)
+
+EndFunc
+
+Func InsertFlowNameAfter($afterName, $newName)
+
+    _InsertFlowNameAfter($afterName, $newName)
+
+EndFunc
+
+Func _UpdateFlowName($oldName, $newName)
+
+    If Not $gTaskActive Then Return
+    If Not EnsureActionWorkspace() Then Return
+    $oldName = _CleanRecordName($oldName)
+    $newName = _CleanRecordName($newName)
+    If $newName = "" Then Return
+
+    Local $lines
+    _FileReadToArray($gFlowFile, $lines)
+    If @error Then
+        _AppendFlowName($newName)
+        Return
+    EndIf
+
+    Local $h = FileOpen($gFlowFile, 2)
+    If $h = -1 Then Return
+
+    Local $updated = False
+
+    For $i = 1 To $lines[0]
+        Local $line = TaskTrimRight($lines[$i])
+
+        If Not $updated And TaskRecordNameFromLine($line) = $oldName Then
+            FileWriteLine($h, TaskReplaceRecordNameInLine($line, $newName))
+            $updated = True
+        Else
+            FileWriteLine($h, $lines[$i])
+        EndIf
+    Next
+
+    If Not $updated Then FileWriteLine($h, _FlowEntryForRecord($newName))
+
+    FileClose($h)
+
+EndFunc
+
+Func _BuildRecordFileList($topName = "")
+
+    _LoadFlowNames()
+
+    Local $data = ""
+
+    For $i = 1 To UBound($gFileNames) - 1
+        Local $name = $gFileDisplays[$i]
+
+        If $data = "" Then
+            $data = $name
+        Else
+            $data &= "|" & $name
+        EndIf
+    Next
+
+    Return $data
+
+EndFunc
+
+Func _SortRecordFileNames()
+
+    Local $n = UBound($gFileNames) - 1
+    If $n <= 1 Then Return
+
+    For $i = 1 To $n - 1
+        For $j = $i + 1 To $n
+            If StringLower($gFileNames[$j]) < StringLower($gFileNames[$i]) Then
+                Local $tmp = $gFileNames[$i]
+                $gFileNames[$i] = $gFileNames[$j]
+                $gFileNames[$j] = $tmp
+            EndIf
+        Next
+    Next
+
+EndFunc
+
+Func RefreshFiles($topName = "")
+
+    TaskMarkMissingRecords()
+
+    Local $selected = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+
+    If $topName = "" Then
+        $topName = $selected
+    EndIf
+
+    Local $data = _BuildRecordFileList($topName)
+
+    If $data = "" Then
+        GUICtrlSetData($cmbFiles, "|", "")
+    Else
+        GUICtrlSetData($cmbFiles, "|" & $data, TaskDisplayNameForRecord($topName))
+    EndIf
+
+EndFunc
+
+Func RefreshFilesWithExtra($topName, $extraName)
+
+    TaskMarkMissingRecords()
+
+    $topName = _CleanRecordName($topName)
+    $extraName = _CleanRecordName($extraName)
+
+    Local $data = _BuildRecordFileList($topName)
+
+    If $extraName <> "" And Not _FileNameArrayContains($extraName) Then
+        If $data = "" Then
+            $data = $extraName
+        Else
+            $data &= "|" & $extraName
+        EndIf
+    EndIf
+
+    If $data = "" Then
+        GUICtrlSetData($cmbFiles, "|", "")
+    Else
+        GUICtrlSetData($cmbFiles, "|" & $data, TaskDisplayNameForRecord($topName))
+    EndIf
+
+EndFunc
+
+Func GetStartupRecordName()
+
+    _LoadFlowNames()
+
+    If UBound($gFileNames) > 1 Then Return $gFileNames[1]
+
+    Return ""
+
+EndFunc
+
+Func SelectRecordByName($name)
+
+    $name = _CleanRecordName($name)
+    If $name = "" Then Return False
+    If Not FileExists(RecordPath($name)) Then Return False
+
+    Local $wasRunning = $running
+
+    $currentFile = RecordPath($name)
+    $gLoadedRecordName = $name
+    RefreshFiles($name)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($name))
+    LoadCommands($currentFile)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($name))
+
+    If $wasRunning Then
+        GUICtrlSetData($status, "Running")
+    Else
+        GUICtrlSetData($status, "Idle")
+    EndIf
+
+    Return True
+
+EndFunc
+
+Func _FindRecordIndex($name)
+
+    For $i = 1 To UBound($gFileNames) - 1
+        If $gFileNames[$i] = $name Then Return $i
+    Next
+
+    Return 0
+
+EndFunc
+
+Func _FindRecordDisplayIndex($display)
+
+    Local $selectedIdx = _CurrentRecordComboIndex()
+    If $selectedIdx > 0 Then Return $selectedIdx
+
+    $display = StringStripWS($display, 3)
+
+    For $i = 1 To UBound($gFileDisplays) - 1
+        If $gFileDisplays[$i] = $display Then Return $i
+    Next
+
+    Local $name = RecordNameFromDisplay($display)
+    For $i = 1 To UBound($gFileNames) - 1
+        If $gFileNames[$i] = $name Then Return $i
+    Next
+
+    Return 0
+
+EndFunc
+
+Func SelectRecordLineByIndex($idx)
+
+    If $idx < 1 Or $idx > UBound($gFileNames) - 1 Then Return False
+
+    Local $name = $gFileNames[$idx]
+    Local $display = $gFileDisplays[$idx]
+    GUICtrlSetData($cmbFiles, $display)
+    _SetRecordComboIndex($idx)
+
+    $currentFile = RecordPath($name)
+    $gLoadedRecordName = $name
+
+    If Not FileExists(RecordPath($name)) Then
+        GUICtrlSetData($cmbCmd, "|", "")
+        GUICtrlSetData($status, "NoFile")
+        Return True
+    EndIf
+
+    LoadCommands($currentFile)
+    GUICtrlSetData($cmbFiles, $display)
+    _SetRecordComboIndex($idx)
+    If $running Then
+        GUICtrlSetData($status, "Running")
+    Else
+        GUICtrlSetData($status, "Idle")
+    EndIf
+    Return True
+
+EndFunc
+
+Func SelectPreviousRecordFile()
+
+    Local $idx = _FindRecordDisplayIndex(GUICtrlRead($cmbFiles))
+
+    If $idx <= 1 Then Return
+
+    SelectRecordLineByIndex($idx - 1)
+
+EndFunc
+
+Func SelectNextRecordFile()
+
+    Local $idx = _FindRecordDisplayIndex(GUICtrlRead($cmbFiles))
+
+    If $idx < 1 Then Return
+    If $idx >= UBound($gFileNames) - 1 Then Return
+
+    SelectRecordLineByIndex($idx + 1)
+
+EndFunc
+
+Func SelectFirstRecordByPrefix($prefix)
+
+    RefreshFiles(RecordNameFromDisplay(GUICtrlRead($cmbFiles)))
+
+    For $i = 1 To UBound($gFileNames) - 1
+        If StringLeft($gFileNames[$i], StringLen($prefix)) = $prefix Then
+            Return SelectRecordByName($gFileNames[$i])
+        EndIf
+    Next
+
+    GUICtrlSetData($status, "NoFile: " & $prefix)
+    Return False
+
+EndFunc
+
+Func SelectRecordByListPosition($pos)
+
+    RefreshFiles(RecordNameFromDisplay(GUICtrlRead($cmbFiles)))
+
+    If $pos < 1 Then Return False
+    If $pos > UBound($gFileNames) - 1 Then
+        GUICtrlSetData($status, "NoFile: " & $pos)
+        Return False
+    EndIf
+
+    Return SelectRecordByName($gFileNames[$pos])
+
+EndFunc
+
+Func SelectFirstRecordFile()
+
+    RefreshFiles(RecordNameFromDisplay(GUICtrlRead($cmbFiles)))
+
+    If UBound($gFileNames) <= 1 Then Return False
+
+    Return SelectRecordByName($gFileNames[1])
+
+EndFunc
+
+Func SelectNextRecordForRun()
+
+    Local $name = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    Local $idx = _FindRecordIndex($name)
+
+    If $idx < 1 Then Return False
+    If $idx >= UBound($gFileNames) - 1 Then Return False
+
+    Return SelectRecordByName($gFileNames[$idx + 1])
+
+EndFunc
+
+Func LoadCommands($file)
+
+    Local $lines
+    _FileReadToArray($file, $lines)
+
+    If @error Then
+        For $retry = 1 To 5
+            Sleep(20)
+            _FileReadToArray($file, $lines)
+            If Not @error Then ExitLoop
+        Next
+    EndIf
+
+    If @error Then
+        If FileExists($file) And FileGetSize($file) > 0 Then
+            GUICtrlSetData($status, "LoadFail")
+            Return
+        EndIf
+        ReDim $gCurrLines[1]
+        $gActiveIndex = 0
+        $gLastVisibleText = ""
+        VarCompileCommands()
+        _RenderCommands()
+        Return
+    EndIf
+
+    LoadCommandsFromArray($lines)
+
+EndFunc
+
+Func LoadCommandsFromArray(ByRef $lines)
+
+    ReDim $gCurrLines[1]
+    $gActiveIndex = 0
+    $gLastVisibleText = ""
+
+    Local $count = 0
+
+    For $i = 1 To $lines[0]
+        Local $line = StringStripWS($lines[$i], 3)
+        If $line = "" Then ContinueLoop
+
+        $count += 1
+        ReDim $gCurrLines[$count + 1]
+        $gCurrLines[$count] = $line
+    Next
+
+    VarCompileCommands()
+    _RenderCommands()
+
+EndFunc
+
+Func _RenderCommands($selectIndex = 0)
+
+    Local $total = UBound($gCurrLines) - 1
+
+    If $total < 1 Then
+        $gActiveIndex = 0
+        GUICtrlSetData($cmbCmd, "|", "")
+        Return
+    EndIf
+
+    If $selectIndex < 1 Then
+        If $gActiveIndex >= 1 And $gActiveIndex <= $total Then
+            $selectIndex = $gActiveIndex
+        Else
+            $selectIndex = 1
+        EndIf
+    EndIf
+
+    If $selectIndex > $total Then $selectIndex = $total
+
+    $gActiveIndex = $selectIndex
+
+    Local $data = ""
+    Local $selected = ""
+
+    For $i = 1 To $total
+        Local $line = $gCurrLines[$i]
+        Local $show = $line
+
+        If StringStripWS($show, 3) = "" Then $show = " "
+
+        If $data = "" Then
+            $data = $show
+        Else
+            $data &= "|" & $show
+        EndIf
+
+        If $i = $selectIndex Then $selected = $show
+    Next
+
+    GUICtrlSetData($cmbCmd, "|" & $data, $selected)
+    Review_UpdateFromActive()
+
+EndFunc
+
+Func UpdateActiveIndexOnly()
+
+    Local $txt = GUICtrlRead($cmbCmd)
+
+    If $txt = " " Then Return
+    If StringStripWS($txt, 3) = "" Then Return
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        If $gCurrLines[$i] = $txt Then
+            $gActiveIndex = $i
+            $gLastVisibleText = $txt
+            Return
+        EndIf
+    Next
+
+    If $gActiveIndex >= 1 And $gActiveIndex <= UBound($gCurrLines) - 1 Then
+        $gCurrLines[$gActiveIndex] = $txt
+        $gLastVisibleText = $txt
+    EndIf
+
+EndFunc
+
+Func _FindActiveIndex()
+
+    Local $txt = GUICtrlRead($cmbCmd)
+
+    If StringStripWS($txt, 3) <> "" And $txt <> " " Then
+        For $i = 1 To UBound($gCurrLines) - 1
+            If $gCurrLines[$i] = $txt Then Return $i
+        Next
+    EndIf
+
+    If $gLastVisibleText <> "" Then
+        For $i = 1 To UBound($gCurrLines) - 1
+            If $gCurrLines[$i] = $gLastVisibleText Then Return $i
+        Next
+    EndIf
+
+    Return $gActiveIndex
+
+EndFunc
+
+Func _SyncActiveFromUI()
+
+    Local $txt = GUICtrlRead($cmbCmd)
+    If $txt = " " Then $txt = ""
+
+    Local $trim = StringStripWS($txt, 3)
+    If $trim = "" Then Return
+
+    If $gActiveIndex >= 1 And $gActiveIndex <= UBound($gCurrLines) - 1 Then
+        $gCurrLines[$gActiveIndex] = $txt
+        $gLastVisibleText = $txt
+        Return
+    EndIf
+
+    Local $n = UBound($gCurrLines)
+    ReDim $gCurrLines[$n + 1]
+    $gCurrLines[$n] = $txt
+    $gActiveIndex = $n
+    $gLastVisibleText = $txt
+
+EndFunc
+
+Func _PruneEmptyCommandLines()
+
+    Local $oldActive = $gActiveIndex
+    Local $new[1]
+    Local $count = 0
+    Local $newActive = 0
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        Local $raw = $gCurrLines[$i]
+        If StringStripWS($raw, 3) = "" Then ContinueLoop
+
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $raw
+
+        If $i = $oldActive Then $newActive = $count
+    Next
+
+    $gCurrLines = $new
+
+    If $count < 1 Then
+        $gActiveIndex = 0
+        $gLastVisibleText = ""
+        Return
+    EndIf
+
+    If $newActive < 1 Then
+        If $oldActive > $count Then
+            $newActive = $count
+        ElseIf $oldActive >= 1 Then
+            $newActive = $oldActive
+        Else
+            $newActive = 1
+        EndIf
+    EndIf
+
+    If $newActive < 1 Then $newActive = 1
+    If $newActive > $count Then $newActive = $count
+
+    $gActiveIndex = $newActive
+    $gLastVisibleText = $gCurrLines[$gActiveIndex]
+
+EndFunc
+
+Func CreateNewRecord()
+
+    If Not $gTaskActive Then
+        GUICtrlSetData($status, "NoTask")
+        Return
+    EndIf
+
+    Local $name = _
+        "rec_" & _
+        @YEAR & @MON & @MDAY & "_" & _
+        @HOUR & @MIN & @SEC
+
+    Local $afterName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    If $afterName = "" Then $afterName = $gLoadedRecordName
+
+    CreateRecordBuffer(_UniqueRecordName($name), $afterName)
+
+EndFunc
+
+Func CreateRecordBuffer($name, $afterName = "")
+
+    If Not $gTaskActive Then
+        GUICtrlSetData($status, "NoTask")
+        Return
+    EndIf
+
+    $name = _CleanRecordName($name)
+    If $name = "" Then $name = _UniqueRecordName("rec")
+
+    If Not EnsureActionWorkspace() Then Return
+
+    $currentFile = RecordPath($name)
+    $gLoadedRecordName = $name
+    If Not $gSuppressFlowUpdate Then
+        $afterName = _CleanRecordName($afterName)
+        If $afterName <> "" Then
+            _InsertFlowNameAfter($afterName, $name)
+        Else
+            _AppendFlowName($name)
+        EndIf
+    EndIf
+    _CreateInitialRecordFile($currentFile)
+    VarEnsureRecordDefaults($name)
+    VarLoadEnv()
+
+    ReDim $gCurrLines[3]
+    $gCurrLines[1] = _ResolutionCommentLine()
+    $gCurrLines[2] = ';=P_P1,"",1,,rem_human_pause'
+    $gActiveIndex = 2
+    $gLastVisibleText = $gCurrLines[2]
+
+    RefreshFiles($name)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($name))
+
+    _RenderCommands(1)
+    GUICtrlSetData($status, "Idle")
+
+EndFunc
+
+Func CreateRecordBufferNoFlow($name)
+
+    Local $oldSuppress = $gSuppressFlowUpdate
+    $gSuppressFlowUpdate = True
+    CreateRecordBuffer($name)
+    $gSuppressFlowUpdate = $oldSuppress
+
+EndFunc
+
+Func CreateForkFromActiveRecord()
+
+    If Not $gTaskActive Then
+        GUICtrlSetData($status, "NoTask")
+        Return
+    EndIf
+    If $running Or $runPaused Then
+        GUICtrlSetData($status, "Running")
+        Return
+    EndIf
+
+    Local $forkName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    If $forkName = "" Then Return
+
+    SaveCurrentData()
+    $forkName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    If $forkName = "" Then Return
+
+    Local $base = "rec_" & @YEAR & @MON & @MDAY & "_" & @HOUR & @MIN & @SEC
+    Local $newName = _UniqueRecordName($base)
+    If $newName = "" Then Return
+
+    If Not TaskInsertForkBranch($forkName, $newName) Then
+        GUICtrlSetData($status, "NoFork")
+        Return
+    EndIf
+
+    CreateRecordBufferNoFlow($newName)
+    RefreshFiles($newName)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($newName))
+    If $gTaskMode Then TaskEditor_Load()
+    GUICtrlSetData($status, "Idle")
+
+EndFunc
+
+Func TaskInsertForkBranch($forkName, $newName)
+
+    If Not $gTaskActive Then Return False
+    If Not EnsureActionWorkspace() Then Return False
+
+    $forkName = _CleanRecordName($forkName)
+    $newName = _CleanRecordName($newName)
+    If $forkName = "" Or $newName = "" Then Return False
+
+    Local $lines[1]
+    Local $count = TaskReadLines($lines)
+    If $count < 1 Then Return False
+
+    Local $forkIdx = 0
+    For $i = 1 To $count
+        If TaskRecordNameFromLine($lines[$i]) = $forkName Then
+            $forkIdx = $i
+            ExitLoop
+        EndIf
+    Next
+    If $forkIdx < 1 Then Return False
+
+    Local $baseIndent = TaskIndentLevel($lines[$forkIdx])
+    Local $branchIndent = $baseIndent + 1
+    If $branchIndent > 15 Then $branchIndent = 15
+
+    Local $scan = $forkIdx + 1
+    Local $hasMarker = False
+    If $scan <= $count And (StringLeft(TaskWithoutIndent($lines[$scan]), 2) = ";=" Or StringLeft(TaskWithoutIndent($lines[$scan]), 2) = ":=") Then
+        $hasMarker = True
+        $scan += 1
+    EndIf
+
+    Local $hasFork = False
+    If $scan <= $count And TaskIndentLevel($lines[$scan]) = $branchIndent And TaskIsBranchLine($lines[$scan]) Then $hasFork = True
+
+    If $hasFork Then
+        Return TaskAppendForkBranch($lines, $count, $forkIdx, $baseIndent, $branchIndent, $scan, $newName)
+    EndIf
+
+    Return TaskCreateFirstForkBranch($lines, $count, $forkIdx, $branchIndent, $hasMarker, $newName)
+
+EndFunc
+
+Func TaskCreateFirstForkBranch(ByRef $lines, $count, $forkIdx, $branchIndent, $hasMarker, $newName)
+
+    Local $searchStart = $forkIdx + 1
+    If $hasMarker Then $searchStart += 1
+
+    Local $nextName = ""
+    Local $nextIdx = 0
+    For $i = $searchStart To $count
+        If TaskIsBranchLine($lines[$i]) Then ExitLoop
+        Local $candidate = TaskRecordNameFromLine($lines[$i])
+        If $candidate <> "" And TaskRecordExists($candidate) Then
+            $nextName = $candidate
+            $nextIdx = $i
+            ExitLoop
+        EndIf
+    Next
+
+    Local $new[1]
+    Local $n = 0
+
+    For $i = 1 To $count
+        If $i = $forkIdx Then
+            TaskArrayAppend($new, $n, $lines[$i])
+            If Not $hasMarker Then
+                TaskArrayAppend($new, $n, TaskRepeatTabs($branchIndent) & ";= Fork")
+                If $nextName = "" Then TaskArrayAppend($new, $n, TaskBranchLine($branchIndent, 1, $newName))
+            EndIf
+            ContinueLoop
+        EndIf
+
+        If $hasMarker And $i = $forkIdx + 1 Then
+            TaskArrayAppend($new, $n, $lines[$i])
+            If $nextName = "" Then TaskArrayAppend($new, $n, TaskBranchLine($branchIndent, 1, $newName))
+            ContinueLoop
+        EndIf
+
+        If $i = $nextIdx And $nextName <> "" Then
+            TaskArrayAppend($new, $n, TaskBranchLine($branchIndent, 1, $nextName))
+            TaskArrayAppend($new, $n, TaskBranchLine($branchIndent, 2, $newName))
+            ContinueLoop
+        EndIf
+
+        TaskArrayAppend($new, $n, $lines[$i])
+    Next
+
+    $new[0] = $n
+    Return TaskWriteLines($new)
+
+EndFunc
+
+Func TaskAppendForkBranch(ByRef $lines, $count, $forkIdx, $baseIndent, $branchIndent, $scan, $newName)
+
+    Local $maxNum = 0
+    Local $insertIdx = $count + 1
+
+    For $i = $scan To $count
+        Local $line = TaskTrimRight($lines[$i])
+        If $line = "" Then ContinueLoop
+        Local $indent = TaskIndentLevel($line)
+        If $indent <= $baseIndent Then
+            $insertIdx = $i
+            ExitLoop
+        EndIf
+        If $indent = $branchIndent And TaskIsBranchLine($line) Then
+            Local $num = TaskBranchNumber($line)
+            If $num > $maxNum Then $maxNum = $num
+        EndIf
+    Next
+
+    If $maxNum < 1 Then $maxNum = 1
+
+    Local $new[1]
+    Local $n = 0
+    For $i = 1 To $count
+        If $i = $insertIdx Then TaskArrayAppend($new, $n, TaskBranchLine($branchIndent, $maxNum + 1, $newName))
+        TaskArrayAppend($new, $n, $lines[$i])
+    Next
+    If $insertIdx = $count + 1 Then TaskArrayAppend($new, $n, TaskBranchLine($branchIndent, $maxNum + 1, $newName))
+
+    $new[0] = $n
+    Return TaskWriteLines($new)
+
+EndFunc
+
+Func TaskArrayAppend(ByRef $arr, ByRef $count, $line)
+
+    $count += 1
+    ReDim $arr[$count + 1]
+    $arr[$count] = $line
+
+EndFunc
+
+Func _CreateInitialRecordFile($file)
+
+    If FileExists($file) Then Return
+
+    Local $h = FileOpen($file, 2)
+    If $h = -1 Then Return
+
+    FileWriteLine($h, _ResolutionCommentLine())
+    FileClose($h)
+
+EndFunc
+
+Func DuplicateActiveRecord()
+
+    If $running Then Return
+    If Not $gTaskActive Then
+        GUICtrlSetData($status, "NoTask")
+        Return
+    EndIf
+
+    Local $srcName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    If $srcName = "" Then Return
+
+    SaveCurrentData()
+    $srcName = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    Local $srcFile = RecordPath($srcName)
+
+    If Not FileExists($srcFile) Then
+        GUICtrlSetData($status, "NoFile")
+        Return
+    EndIf
+
+    Local $newName = _UniqueCopyRecordName($srcName)
+    If $newName = "" Then Return
+
+    If FileExists(RecordPath($newName)) Then
+        GUICtrlSetData($status, "Exists")
+        Return
+    EndIf
+
+    Local $destFile = RecordPath($newName)
+    If Not FileCopy($srcFile, $destFile, 0) Then
+        GUICtrlSetData($status, "CopyFail")
+        Return
+    EndIf
+
+    _InsertFlowNameAfter($srcName, $newName)
+    $currentFile = $destFile
+    $gLoadedRecordName = $newName
+    RefreshFiles($newName)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($newName))
+    LoadCommands($currentFile)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($newName))
+
+    If $recording Then
+        GUICtrlSetData($status, "Recording")
+    Else
+        GUICtrlSetData($status, "Idle")
+    EndIf
+
+EndFunc
+
+Func _UniqueCopyRecordName($srcName)
+
+    Local $baseName = _CleanRecordName($srcName)
+    If $baseName = "" Then $baseName = "record"
+
+    For $i = 1 To 999
+        Local $candidate = $baseName & "_cp" & $i
+        If Not FileExists(RecordPath($candidate)) Then Return $candidate
+    Next
+
+    Return $baseName & "_cp" & @HOUR & @MIN & @SEC
+
+EndFunc
+
+Func _CleanRecordName($name)
+
+    $name = StringStripWS($name, 3)
+    If StringRight(StringLower($name), 4) = ".rec" Then $name = StringTrimRight($name, 4)
+    $name = StringRegExpReplace($name, '[\\/:*?"<>|]', "_")
+    $name = StringStripWS($name, 3)
+
+    Return $name
+
+EndFunc
+
+Func _UniqueRecordName($baseName)
+
+    Local $name = _CleanRecordName($baseName)
+    If $name = "" Then $name = "copy"
+
+    If Not FileExists(RecordPath($name)) Then Return $name
+
+    For $i = 2 To 999
+        Local $candidate = $name & "_" & $i
+        If Not FileExists(RecordPath($candidate)) Then Return $candidate
+    Next
+
+    Return $name & "_" & @HOUR & @MIN & @SEC
+
+EndFunc
+
+Func _PipeListContains($data, $name)
+
+    Local $items = StringSplit($data, "|")
+
+    For $i = 1 To $items[0]
+        If $items[$i] = $name Then Return True
+    Next
+
+    Return False
+
+EndFunc
+
+Func _ResolutionCommentLine()
+
+    Return ";= Resolution " & @DesktopWidth & "x" & @DesktopHeight
+
+EndFunc
+
+Func _IsResolutionComment($line)
+
+    Return StringLeft(StringStripWS($line, 3), 14) = ";= Resolution "
+
+EndFunc
+
+Func _EnsureResolutionComment()
+
+    Local $line = _ResolutionCommentLine()
+
+    If UBound($gCurrLines) <= 1 Then
+        ReDim $gCurrLines[2]
+        $gCurrLines[1] = $line
+        $gActiveIndex = 1
+        $gLastVisibleText = $line
+        Return
+    EndIf
+
+    If _IsResolutionComment($gCurrLines[1]) Then
+        If $gActiveIndex = 1 Then $gLastVisibleText = $gCurrLines[1]
+        Return
+    EndIf
+
+    Local $new[1]
+    ReDim $new[UBound($gCurrLines) + 1]
+    $new[1] = $line
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        $new[$i + 1] = $gCurrLines[$i]
+    Next
+
+    $gCurrLines = $new
+
+    If $gActiveIndex >= 1 Then $gActiveIndex += 1
+    If $gLastVisibleText = "" Then $gLastVisibleText = $line
+
+EndFunc
+
+Func CompressCommands()
+
+    Local $mergeEnable = IniRead($iniFile, "Merge", "enabled", "1")
+    If $mergeEnable <> "1" Then Return
+
+    Local $mousePx = Number(IniRead($iniFile, "Merge", "mouse_px", "6"))
+    If UBound($gCurrLines) <= 2 Then Return
+
+    Local $new[1]
+    Local $count = 0
+    Local $i = 1
+
+    While $i <= UBound($gCurrLines) - 1
+
+        Local $line = StringStripWS($gCurrLines[$i], 3)
+
+        If $line = "" Then
+            $i += 1
+            ContinueLoop
+        EndIf
+
+        If StringLeft($line, 2) = ";=" _
+            Or StringLeft($line, 2) = "S_" _
+            Or StringLeft($line, 3) = "MW_" _
+            Or StringLeft($line, 3) = "MD_" _
+            Or StringLeft($line, 4) = "MSP_" Then
+
+            $count += 1
+            ReDim $new[$count + 1]
+            $new[$count] = $line
+            $i += 1
+            ContinueLoop
+        EndIf
+
+        ; =====================================
+        ; MOUSE COMPRESSION
+        ; M_P1,x,y,L,repeat,delay,rem_xxx
+        ;
+        ; If auto comment exists, keep the FIRST rem index.
+        ; Example:
+        ; M_P1,500,300,L,1,,rem_0001
+        ; M_P1,501,301,L,1,,rem_0002
+        ; -> M_P1,500,300,L,2,,rem_0001
+        ; =====================================
+
+        If StringLeft($line, 2) = "M_" Then
+
+            Local $p = StringSplit($line, ",")
+
+            If $p[0] < 4 Then
+                $count += 1
+                ReDim $new[$count + 1]
+                $new[$count] = $line
+                $i += 1
+                ContinueLoop
+            EndIf
+
+            Local $baseCmd = $p[1]
+            Local $baseX = Number($p[2])
+            Local $baseY = Number($p[3])
+            Local $baseBtn = $p[4]
+            Local $baseRepeat = _CommandRepeatValue($p, 5)
+            Local $baseDelay = _CommandPartValue($p, 6, "")
+            Local $baseRem = _CommandRemTail($line, "rem_mouse")
+            Local $repeat = $baseRepeat
+            Local $canDoubleClick = ($baseBtn = "L" And $baseRepeat = 1 And $baseDelay = "")
+            Local $j = $i + 1
+
+            While $j <= UBound($gCurrLines) - 1
+
+                Local $next = StringStripWS($gCurrLines[$j], 3)
+
+                If StringLeft($next, 2) <> "M_" Then ExitLoop
+
+                Local $n = StringSplit($next, ",")
+
+                If $n[0] < 4 Then ExitLoop
+
+                Local $nx = Number($n[2])
+                Local $ny = Number($n[3])
+
+                If $n[4] <> $baseBtn Then ExitLoop
+
+                If Abs($nx - $baseX) > $mousePx Then ExitLoop
+                If Abs($ny - $baseY) > $mousePx Then ExitLoop
+
+                Local $nextRepeat = _CommandRepeatValue($n, 5)
+                Local $nextDelay = _CommandPartValue($n, 6, "")
+                If $nextDelay <> $baseDelay Then ExitLoop
+
+                If $nextRepeat <> 1 Then $canDoubleClick = False
+                $repeat += $nextRepeat
+
+                ; average position for final command
+                $baseX = Int(($baseX + $nx) / 2)
+                $baseY = Int(($baseY + $ny) / 2)
+
+                $j += 1
+
+            WEnd
+
+            If $baseBtn = "L" And $repeat = 2 And $canDoubleClick Then
+                $baseBtn = "D"
+                $repeat = 1
+            EndIf
+
+            Local $merged = _
+                $baseCmd & "," & _
+                $baseX & "," & _
+                $baseY & "," & _
+                $baseBtn & "," & _
+                $repeat & "," & _
+                $baseDelay & "," & _
+                $baseRem
+
+            $count += 1
+            ReDim $new[$count + 1]
+            $new[$count] = $merged
+
+            $i = $j
+            ContinueLoop
+
+        EndIf
+
+        If StringLeft($line, 2) = "K_" Then
+
+            If _MaskPrintableKeyRunsEnabled() And _IsPrintableKeyLine($line) Then
+
+                Local $maskJ = $i + 1
+
+                While $maskJ <= UBound($gCurrLines) - 1
+                    Local $maskNext = StringStripWS($gCurrLines[$maskJ], 3)
+                    If Not _IsPrintableKeyLine($maskNext) Then ExitLoop
+                    If Not _KeyLineGapWithinLimit($maskNext) Then ExitLoop
+                    $maskJ += 1
+                WEnd
+
+                If $maskJ > $i + 1 Then
+                    $count += 1
+                    ReDim $new[$count + 1]
+                    $new[$count] = 'S_S1,"",1,,rem_string_masked_' & _BuildMaskedStringRem($i, $maskJ)
+                    $i = $maskJ
+                    ContinueLoop
+                EndIf
+
+            EndIf
+
+            Local $kp = StringSplit($line, ",")
+
+            If $kp[0] < 2 Then
+                $count += 1
+                ReDim $new[$count + 1]
+                $new[$count] = $line
+                $i += 1
+                ContinueLoop
+            EndIf
+
+            Local $baseCmdK = $kp[1]
+            Local $baseKey = $kp[2]
+            Local $baseRepeatK = _CommandRepeatValue($kp, 3)
+            Local $baseDelayK = _CommandPartValue($kp, 4, "")
+            Local $baseRemK = _CommandRemTail($line, "rem_key")
+            Local $krepeat = $baseRepeatK
+            Local $kj = $i + 1
+
+            While $kj <= UBound($gCurrLines) - 1
+                Local $knext = StringStripWS($gCurrLines[$kj], 3)
+                If StringLeft($knext, 2) <> "K_" Then ExitLoop
+
+                Local $kn = StringSplit($knext, ",")
+                If $kn[0] < 2 Then ExitLoop
+                If $kn[2] <> $baseKey Then ExitLoop
+                If _CommandPartValue($kn, 4, "") <> $baseDelayK Then ExitLoop
+
+                $krepeat += _CommandRepeatValue($kn, 3)
+                $kj += 1
+            WEnd
+
+            Local $kmerged = $baseCmdK & "," & $baseKey & "," & $krepeat & "," & $baseDelayK & "," & $baseRemK
+
+            $count += 1
+            ReDim $new[$count + 1]
+            $new[$count] = $kmerged
+            $i = $kj
+            ContinueLoop
+        EndIf
+
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $line
+        $i += 1
+    WEnd
+
+    $gCurrLines = $new
+
+EndFunc
+
+Func _CommandPartValue(ByRef $parts, $idx, $default = "")
+
+    If $parts[0] >= $idx Then Return $parts[$idx]
+
+    Return $default
+
+EndFunc
+
+Func _CommandRepeatValue(ByRef $parts, $idx)
+
+    Local $value = _CommandPartValue($parts, $idx, "1")
+    If StringStripWS($value, 3) = "" Then Return 1
+
+    Local $repeat = Number($value)
+    If $repeat < 1 Then Return 1
+
+    Return $repeat
+
+EndFunc
+
+Func _CommandRemTail($line, $default = "")
+
+    Local $remPos = StringInStr($line, ",rem_")
+    If $remPos > 0 Then Return StringMid($line, $remPos + 1)
+
+    Local $parts = StringSplit($line, ",")
+    If $parts[0] >= 7 Then Return $parts[7]
+    If StringLeft($line, 2) = "K_" And $parts[0] >= 5 Then Return $parts[5]
+
+    Return $default
+
+EndFunc
+
+Func _MaskPrintableKeyRunsEnabled()
+
+    Return IniRead($iniFile, "Record", "mask_button_string", "1") = "1"
+
+EndFunc
+
+Func _KeyLineGapWithinLimit($line)
+
+    Local $p = StringSplit($line, ",")
+    If $p[0] < 4 Then Return False
+
+    Local $gap = Number($p[4])
+    Local $limit = Number(IniRead($iniFile, "Record", "button_string_gap_sec", "0.7"))
+
+    If $limit <= 0 Then $limit = 0.7
+
+    Return $gap <= $limit
+
+EndFunc
+
+Func _IsPrintableKeyLine($line)
+
+    If StringLeft($line, 2) <> "K_" Then Return False
+
+    Local $p = StringSplit($line, ",")
+    If $p[0] < 2 Then Return False
+
+    Return _IsPrintableKeyValue($p[2])
+
+EndFunc
+
+Func _IsPrintableKeyValue($key)
+
+    If $key = "" Then Return False
+
+    Local $first = StringLeft($key, 1)
+    If $first = "^" Or $first = "!" Or $first = "+" Or $first = "#" Then Return False
+
+    Switch $key
+        Case "{TAB}", "{ENTER}", "{ESC}", "{BACKSPACE}", "{DELETE}", "{INSERT}", "{HOME}", "{END}", "{PGUP}", "{PGDN}", "{UP}", "{DOWN}", "{LEFT}", "{RIGHT}"
+            Return False
+        Case "{F1}", "{F2}", "{F3}", "{F4}", "{F5}", "{F6}", "{F7}", "{F8}", "{F9}", "{F10}", "{F11}", "{F12}"
+            Return False
+        Case "{SPACE}", "{ASC 034}", "{ASC 044}", "{+}", "{#}", "{^}"
+            Return True
+    EndSwitch
+
+    If StringLen($key) = 1 Then Return True
+
+    Return False
+
+EndFunc
+
+Func _BuildMaskedStringRem($startIndex, $endIndex)
+
+    Local $out = ""
+
+    For $i = $startIndex To $endIndex - 1
+        Local $line = StringStripWS($gCurrLines[$i], 3)
+        Local $p = StringSplit($line, ",")
+
+        If $p[0] < 2 Then ContinueLoop
+
+        $out &= _PrintableKeyToRemText($p[2])
+    Next
+
+    If $out = "" Then Return "empty"
+
+    Return $out
+
+EndFunc
+
+Func _PrintableKeyToRemText($key)
+
+    Switch $key
+        Case "{SPACE}"
+            Return "{SPACE}"
+        Case "{ASC 034}"
+            Return "{QUOTE}"
+        Case "{ASC 044}"
+            Return "{COMMA}"
+        Case "{+}"
+            Return "{PLUS}"
+        Case "{#}"
+            Return "{HASH}"
+        Case "{^}"
+            Return "{CARET}"
+    EndSwitch
+
+    If StringLen($key) = 1 Then Return $key
+
+    Return "{" & $key & "}"
+
+EndFunc
+
+Func RenumberCommandIds()
+
+    Local $m = 0
+    Local $mdown = 0
+    Local $mup = 0
+    Local $k = 0
+    Local $s = 0
+    Local $mw = 0
+    Local $md = 0
+    Local $mm = 0
+    Local $p = 0
+    Local $t = 0
+    Local $mspGroup = 0
+    Local $mspStep = 0
+
+    For $i = 1 To UBound($gCurrLines) - 1
+
+        Local $line = StringStripWS($gCurrLines[$i], 3)
+        If $line = "" Then ContinueLoop
+        If StringLeft($line, 2) = ";=" Then ContinueLoop
+
+        Local $cmd = _CommandName($line)
+
+        If StringLeft($cmd, 4) = "MSP_" Then
+
+            If _IsMspBaseCommand($cmd) Then
+                $mspGroup += 1
+                $mspStep = 1
+            Else
+                If $mspGroup < 1 Then $mspGroup = 1
+                $mspStep += 1
+                If $mspStep < 2 Then $mspStep = 2
+            EndIf
+
+            $gCurrLines[$i] = _ReplaceCommandName($line, "MSP_" & $mspGroup & "_" & $mspStep)
+            ContinueLoop
+
+        EndIf
+
+        Switch _CommandIdFamily($cmd)
+
+            Case "M_P"
+                $m += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "M_P" & $m)
+
+            Case "M_D"
+                $mdown += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "M_D" & $mdown)
+
+            Case "M_U"
+                $mup += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "M_U" & $mup)
+
+            Case "K_B"
+                $k += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "K_B" & $k)
+
+            Case "S_S"
+                $s += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "S_S" & $s)
+
+            Case "MW_W"
+                $mw += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "MW_W" & $mw)
+
+            Case "MD_D"
+                $md += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "MD_D" & $md)
+
+            Case "MM_M"
+                $mm += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "MM_M" & $mm)
+
+            Case "P_P"
+                $p += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "P_P" & $p)
+
+            Case "T_D"
+                $t += 1
+                $gCurrLines[$i] = _ReplaceCommandName($line, "T_D" & $t)
+
+        EndSwitch
+
+    Next
+
+EndFunc
+
+Func _IsMspBaseCommand($cmd)
+
+    Local $parts = StringSplit($cmd, "_")
+
+    If $parts[0] >= 3 Then Return Number($parts[3]) = 1
+    If $parts[0] = 2 Then Return Number($parts[2]) = 1
+
+    Return False
+
+EndFunc
+
+Func _CommandName($line)
+
+    Local $comma = StringInStr($line, ",")
+    If $comma < 1 Then Return $line
+
+    Return StringLeft($line, $comma - 1)
+
+EndFunc
+
+Func _CommandIdFamily($cmd)
+
+    If StringRegExp($cmd, "^M_P\d+$") Then Return "M_P"
+    If StringRegExp($cmd, "^M_D\d+$") Then Return "M_D"
+    If StringRegExp($cmd, "^M_U\d+$") Then Return "M_U"
+    If StringRegExp($cmd, "^K_B\d+$") Then Return "K_B"
+    If StringRegExp($cmd, "^S_S\d+$") Then Return "S_S"
+    If StringRegExp($cmd, "^MW_W\d+$") Then Return "MW_W"
+    If StringRegExp($cmd, "^MD_D\d+$") Then Return "MD_D"
+    If StringRegExp($cmd, "^MM_M\d+$") Then Return "MM_M"
+    If StringRegExp($cmd, "^P_P\d+$") Then Return "P_P"
+    If StringRegExp($cmd, "^T_D\d+$") Then Return "T_D"
+
+    Return ""
+
+EndFunc
+
+Func _ReplaceCommandName($line, $newCmd)
+
+    Local $comma = StringInStr($line, ",")
+    If $comma < 1 Then Return $newCmd
+
+    Return $newCmd & StringMid($line, $comma)
+
+EndFunc
+
+Func SaveCurrentData()
+
+    If Not $gTaskActive Then
+        GUICtrlSetData($status, "NoTask")
+        Return
+    EndIf
+
+    _SyncActiveFromUI()
+    Review_SyncEditRem()
+    _PruneEmptyCommandLines()
+    _EnsureResolutionComment()
+    CompressCommands()
+    RenumberCommandIds()
+
+    Local $name = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    $name = _CleanRecordName($name)
+    If $name = "" Then Return
+
+    If Not EnsureActionWorkspace() Then Return
+
+    If $gLoadedRecordName <> "" And $gLoadedRecordName <> $name Then
+        Local $oldFile = RecordPath($gLoadedRecordName)
+        Local $newFile = RecordPath($name)
+
+        If FileExists($newFile) Then
+            GUICtrlSetData($status, "Name exists")
+            GUICtrlSetData($cmbFiles, $gLoadedRecordName)
+            Return
+        EndIf
+
+        If FileExists($oldFile) And Not FileExists($newFile) Then
+            FileMove($oldFile, $newFile, 0)
+        EndIf
+
+        If Not $gSuppressFlowUpdate Then _UpdateFlowName($gLoadedRecordName, $name)
+        $gLoadedRecordName = $name
+    Else
+        If Not $gSuppressFlowUpdate Then _AppendFlowName($name)
+    EndIf
+
+    Local $file = RecordPath($name)
+    Local $h = FileOpen($file, 2)
+    If $h = -1 Then Return
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        Local $line = StringStripWS($gCurrLines[$i], 3)
+        If $line = "" Then ContinueLoop
+        FileWriteLine($h, $line)
+    Next
+
+    FileClose($h)
+    $currentFile = $file
+    $gLoadedRecordName = $name
+
+    RefreshFiles($name)
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($name))
+    LoadCommands($currentFile)
+
+    If $recording Then
+        GUICtrlSetData($status, "Recording")
+    Else
+        GUICtrlSetData($status, "Idle")
+    EndIf
+
+EndFunc
+
+Func SaveCurrentDataNoFlow()
+
+    Local $oldSuppress = $gSuppressFlowUpdate
+    $gSuppressFlowUpdate = True
+    SaveCurrentData()
+    $gSuppressFlowUpdate = $oldSuppress
+
+EndFunc
+
+Func InsertAfterSelected()
+
+    _SyncActiveFromUI()
+
+    Local $idx = _FindActiveIndex()
+
+    If UBound($gCurrLines) <= 1 Or $idx < 1 Then
+        ReDim $gCurrLines[2]
+        $gCurrLines[1] = ""
+        $gActiveIndex = 1
+        $gLastVisibleText = ""
+        _RenderCommands(1)
+        Return
+    EndIf
+
+    Local $new[1]
+    Local $count = 0
+    Local $insertIndex = $idx + 1
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $gCurrLines[$i]
+
+        If $i = $idx Then
+            $count += 1
+            ReDim $new[$count + 1]
+            $new[$count] = ""
+        EndIf
+    Next
+
+    $gCurrLines = $new
+    $gActiveIndex = $insertIndex
+    $gLastVisibleText = ""
+    _RenderCommands($insertIndex)
+
+EndFunc
+
+Func DeleteSelectedCommand()
+
+    Local $idx = _FindActiveIndex()
+    If $idx < 1 Then Return
+    If $idx > UBound($gCurrLines) - 1 Then Return
+
+    Local $new[1]
+    Local $count = 0
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        If $i = $idx Then ContinueLoop
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $gCurrLines[$i]
+    Next
+
+    $gCurrLines = $new
+
+    Local $nextIndex = $idx
+    If $nextIndex > UBound($gCurrLines) - 1 Then $nextIndex = UBound($gCurrLines) - 1
+
+    If $nextIndex < 1 Then
+        $gActiveIndex = 0
+    Else
+        $gActiveIndex = $nextIndex
+    EndIf
+
+    $gLastVisibleText = ""
+    _RenderCommands($gActiveIndex)
+
+EndFunc
+
+Func DeleteSelectedCommandForRecord()
+
+    Local $idx = _FindActiveIndex()
+    If $idx < 1 Then Return
+    If $idx > UBound($gCurrLines) - 1 Then Return
+
+    Local $new[1]
+    Local $count = 0
+
+    For $i = 1 To UBound($gCurrLines) - 1
+        If $i = $idx Then ContinueLoop
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $gCurrLines[$i]
+    Next
+
+    $gCurrLines = $new
+
+    Local $prevIndex = $idx - 1
+    If $prevIndex > UBound($gCurrLines) - 1 Then $prevIndex = UBound($gCurrLines) - 1
+
+    If $prevIndex < 1 Then
+        $gActiveIndex = 0
+    Else
+        $gActiveIndex = $prevIndex
+        $gLastVisibleText = $gCurrLines[$gActiveIndex]
+    EndIf
+
+    _RenderCommands($gActiveIndex)
+
+EndFunc
+
+Func MoveActiveLineUp()
+
+    _SyncActiveFromUI()
+
+    Local $idx = _FindActiveIndex()
+    If $idx <= 1 Then Return
+    If $idx > UBound($gCurrLines) - 1 Then Return
+
+    Local $tmp = $gCurrLines[$idx - 1]
+    $gCurrLines[$idx - 1] = $gCurrLines[$idx]
+    $gCurrLines[$idx] = $tmp
+
+    $gActiveIndex = $idx - 1
+    $gLastVisibleText = $gCurrLines[$gActiveIndex]
+    _RenderCommands($gActiveIndex)
+
+EndFunc
+
+Func MoveActiveLineDown()
+
+    _SyncActiveFromUI()
+
+    Local $idx = _FindActiveIndex()
+    If $idx < 1 Then Return
+    If $idx >= UBound($gCurrLines) - 1 Then Return
+
+    Local $tmp = $gCurrLines[$idx + 1]
+    $gCurrLines[$idx + 1] = $gCurrLines[$idx]
+    $gCurrLines[$idx] = $tmp
+
+    $gActiveIndex = $idx + 1
+    $gLastVisibleText = $gCurrLines[$gActiveIndex]
+    _RenderCommands($gActiveIndex)
+
+EndFunc
+
+Func SelectPreviousCommand()
+
+    If $running Or $runPaused Then Return
+
+    _SyncActiveFromUI()
+
+    Local $idx = _FindActiveIndex()
+    If $idx <= 1 Then Return
+
+    $gActiveIndex = $idx - 1
+    $gLastVisibleText = $gCurrLines[$gActiveIndex]
+    _RenderCommands($gActiveIndex)
+
+EndFunc
+
+Func SelectNextCommand()
+
+    If $running Or $runPaused Then Return
+
+    _SyncActiveFromUI()
+
+    Local $idx = _FindActiveIndex()
+    If $idx < 1 Then Return
+    If $idx >= UBound($gCurrLines) - 1 Then Return
+
+    $gActiveIndex = $idx + 1
+    $gLastVisibleText = $gCurrLines[$gActiveIndex]
+    _RenderCommands($gActiveIndex)
+
+EndFunc
+
+Func AppendCommand($line)
+
+    _ClearTooltipOneShotAfterAction()
+    _SyncActiveFromUI()
+
+    Local $idx = _FindActiveIndex()
+    Local $total = UBound($gCurrLines) - 1
+
+    If $idx < 1 Or $idx > $total Then
+        Local $n = UBound($gCurrLines)
+        ReDim $gCurrLines[$n + 1]
+        $gCurrLines[$n] = $line
+        $gActiveIndex = $n
+        $gLastVisibleText = $line
+        _RenderCommands($n)
+        Return
+    EndIf
+
+    Local $new[1]
+    Local $count = 0
+    Local $baseIndex = _RecordInsertBaseIndex($idx)
+    Local $insertIndex = $baseIndex + 1
+
+    For $i = 1 To $total
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $gCurrLines[$i]
+
+        If $i = $baseIndex Then
+            $count += 1
+            ReDim $new[$count + 1]
+            $new[$count] = $line
+        EndIf
+    Next
+
+    $gCurrLines = $new
+    $gActiveIndex = $insertIndex
+    $gLastVisibleText = $line
+    VarCompileCommands()
+    _RenderCommands($insertIndex)
+
+EndFunc
+
+Func AppendCommandToEnd($line)
+
+    _SyncActiveFromUI()
+    _PruneEmptyCommandLines()
+
+    Local $n = UBound($gCurrLines)
+    ReDim $gCurrLines[$n + 1]
+    $gCurrLines[$n] = $line
+    $gActiveIndex = $n
+    $gLastVisibleText = $line
+    VarCompileCommands()
+    _RenderCommands($n)
+
+EndFunc
+
+Func _RecordInsertBaseIndex($idx)
+
+    Local $total = UBound($gCurrLines) - 1
+    If $idx < 1 Or $idx > $total Then Return $idx
+
+    If Not _IsCommentLine($gCurrLines[$idx]) Then Return $idx
+
+    Local $baseIndex = $idx
+
+    While $baseIndex < $total
+        If Not _IsCommentLine($gCurrLines[$baseIndex + 1]) Then ExitLoop
+        $baseIndex += 1
+    WEnd
+
+    Return $baseIndex
+
+EndFunc
+
+Func _IsCommentLine($line)
+
+    Return StringLeft(StringStripWS($line, 3), 2) = ";="
+
+EndFunc
+
+Func InsertPatchLinesAfter($insertIndex, ByRef $patchLines)
+
+    Local $total = UBound($gCurrLines) - 1
+    If $insertIndex < 1 Then $insertIndex = 1
+    If $insertIndex > $total Then $insertIndex = $total
+
+    Local $new[1]
+    Local $count = 0
+    Local $patchCount = 0
+
+    For $i = 1 To $total
+        $count += 1
+        ReDim $new[$count + 1]
+        $new[$count] = $gCurrLines[$i]
+
+        If $i = $insertIndex Then
+            For $j = 1 To UBound($patchLines) - 1
+                Local $line = StringStripWS($patchLines[$j], 3)
+                If $line = "" Then ContinueLoop
+                $count += 1
+                $patchCount += 1
+                ReDim $new[$count + 1]
+                $new[$count] = $patchLines[$j]
+            Next
+        EndIf
+    Next
+
+    $gCurrLines = $new
+
+    If $patchCount > 0 Then
+        $gActiveIndex = $insertIndex + $patchCount
+    Else
+        $gActiveIndex = $insertIndex
+    EndIf
+
+    If $gActiveIndex >= 1 And $gActiveIndex <= UBound($gCurrLines) - 1 Then
+        $gLastVisibleText = $gCurrLines[$gActiveIndex]
+    Else
+        $gLastVisibleText = ""
+    EndIf
+
+    _RenderCommands($gActiveIndex)
+
+    Return $patchCount
+
+EndFunc
+
+Func RecordInsertAfterActive($line)
+    AppendCommand($line)
+EndFunc
+
+; =====================================================
+; RELOAD RECORD FILE LIST
+; L button
+; Same logic as startup, but keeps current file if possible
+; =====================================================
+
+Func ReloadRecordList()
+
+    TaskMarkMissingRecords()
+
+    Local $name = RecordNameFromDisplay(GUICtrlRead($cmbFiles))
+    $name = _CleanRecordName($name)
+
+    If $name = "" Or Not FileExists(RecordPath($name)) Then
+        $name = GetStartupRecordName()
+    EndIf
+
+    If $name = "" Then $name = "record1"
+
+    RefreshFiles($name)
+
+    GUICtrlSetData($cmbFiles, TaskDisplayNameForRecord($name))
+
+    $currentFile = RecordPath($name)
+    $gLoadedRecordName = $name
+
+    If FileExists($currentFile) Then
+        LoadCommands($currentFile)
+    Else
+        GUICtrlSetData($cmbCmd, "|", "")
+    EndIf
+
+    GUICtrlSetData($status, "Idle")
+
+EndFunc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
