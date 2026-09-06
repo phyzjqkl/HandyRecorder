@@ -42,6 +42,7 @@ Global $runSelectNextAfterFinish = False
 Global $gRunMode
 Global $gMFStepReady = False
 Global $gMFStartIndex = 0
+Global $gCommandRunError = ""
 
 Global $mspBaseSet = False
 Global $mspBaseX = 0
@@ -54,6 +55,24 @@ Global $dragDownActive = False
 Global $dragDownButton = "L"
 Global $dragStartX = 0
 Global $dragStartY = 0
+
+
+Func CommandRunError()
+
+    Return $gCommandRunError
+
+EndFunc
+
+Func _RunnerCommandError($line, $category, $reason)
+
+    $gCommandRunError = $category & ": " & $reason & " :: " & $line
+    $running = False
+    $runPaused = False
+    GUICtrlSetData($btnStart, "Start")
+    GUICtrlSetData($status, "CmdErr")
+    Return False
+
+EndFunc
 
 Func ToggleRun()
 
@@ -1466,6 +1485,8 @@ Func ExecuteCommand($line)
 
     EndIf
 
+
+    _RunnerCommandError($line, "unknown", "Unknown REC command")
 EndFunc
 
 Func _PauseWait($ms)
